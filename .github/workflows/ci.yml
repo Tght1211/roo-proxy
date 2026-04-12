@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check CLI help
+        run: node cli/index.js --help
+
+      - name: Run doctor
+        run: node scripts/healthcheck.js
+
+      - name: Smoke start server
+        run: |
+          cp .env.example .env
+          node server/index.js > /tmp/roo-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID' EXIT
+          sleep 2
+          curl -fsS http://127.0.0.1:7891/status
+          curl -fsSI -x http://127.0.0.1:7890 http://example.com

@@ -23,6 +23,7 @@ CLI 统一使用 `roo`。
 - 提供本地 dashboard 面板
 - 提供 `roo` CLI 管理命令
 - 提供安装脚本与环境自检
+- 提供 GitHub Actions CI 基础冒烟检查
 - 所有用户可见错误均为中文友好提示
 
 ---
@@ -145,6 +146,10 @@ npm run serve
 }
 ```
 
+你也可以直接参考仓库中的示例文件：
+
+- [examples/roo-config.example.json](examples/roo-config.example.json)
+
 ---
 
 ## CLI 命令
@@ -259,6 +264,21 @@ npm run serve     # 直接运行 node server/index.js
 
 ---
 
+## CI
+
+仓库已经包含基础 GitHub Actions 工作流：
+
+- 安装依赖
+- 检查 CLI help
+- 运行 doctor
+- 启动服务做 dashboard / proxy 冒烟测试
+
+工作流文件：
+
+- [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
+---
+
 ## FAQ
 
 ### 1. 为什么服务启动后没有走上游代理？
@@ -321,6 +341,16 @@ pm2 reload roo
 
 ---
 
+## 首发 Release 文案
+
+仓库已附带首发说明草稿：
+
+- [docs/release-v1.0.0.md](docs/release-v1.0.0.md)
+
+可以直接复制到 GitHub Release 页面使用。
+
+---
+
 ## Roadmap
 
 后续计划与已知限制见：
@@ -353,7 +383,12 @@ roo/
 ├── docs/
 │   ├── development.md
 │   ├── api-overview.md
-│   └── roadmap.md
+│   ├── roadmap.md
+│   └── release-v1.0.0.md
+├── examples/
+│   └── roo-config.example.json
+├── .github/workflows/
+│   └── ci.yml
 ├── .env.example
 ├── package.json
 └── README.md
