@@ -1,0 +1,35 @@
+{
+  "name": "roo",
+  "version": "1.0.0",
+  "description": "Roo 个人代理管理系统",
+  "main": "server/index.js",
+  "bin": {
+    "roo": "./cli/index.js"
+  },
+  "scripts": {
+    "start": "pm2 start server/ecosystem.config.js",
+    "stop": "pm2 stop roo && pm2 delete roo",
+    "restart": "pm2 restart roo",
+    "logs": "pm2 logs roo",
+    "doctor": "node scripts/healthcheck.js",
+    "serve": "node server/index.js"
+  },
+  "keywords": [
+    "proxy",
+    "roo",
+    "proxy-chain",
+    "dashboard",
+    "gist"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "proxy-chain": "^2.7.1"
+  }
+}
