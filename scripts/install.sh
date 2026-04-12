@@ -4,6 +4,7 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 EXAMPLE_ENV_FILE="$ROOT_DIR/.env.example"
+LOCAL_CONFIG_PATH="data/roo-config.json"
 
 print_line() {
   printf '%s\n' "$1"
@@ -40,6 +41,20 @@ if not updated:
     lines.append(f"{key}={value}")
 path.write_text("\n".join(lines) + "\n")
 PY
+}
+
+write_local_config() {
+  local config_path="$ROOT_DIR/$LOCAL_CONFIG_PATH"
+  mkdir -p "$(dirname "$config_path")"
+  cat > "$config_path" <<'EOF'
+{
+  "balance_strategy": "round-robin",
+  "upstreams": [],
+  "rules": [
+    "example.com"
+  ]
+}
+EOF
 }
 
 print_line "========================================"
@@ -87,19 +102,41 @@ if [ ! -f "$EXAMPLE_ENV_FILE" ]; then
   exit 1
 fi
 
-if [ -f "$ENV_FILE" ]; then
-  print_line "检测到已有 .env 文件，将保留原配置。"
-else
+if [ ! -f "$ENV_FILE" ]; then
   cp "$EXAMPLE_ENV_FILE" "$ENV_FILE"
-  print_line "即将生成 .env 文件，请输入以下信息。"
-  printf 'Gist ID: '
+fi
+
+print_line "现在开始初始化 Roo 配置。"
+print_line "推荐新手先使用 local 模式，先在本机跑通；以后再切到 gist 在线更新。"
+printf '请选择配置模式（local/gist，默认 local）: '
+read -r CONFIG_SOURCE
+CONFIG_SOURCE="${CONFIG_SOURCE:-local}"
+
+set_env_value "CONFIG_SOURCE" "$CONFIG_SOURCE"
+set_env_value "LOCAL_CONFIG_PATH" "$LOCAL_CONFIG_PATH"
+
+printf '本地代理端口（默认 7890）: '
+read -r LOCAL_PORT
+set_env_value "LOCAL_PORT" "${LOCAL_PORT:-7890}"
+
+printf 'Dashboard 端口（默认 7891）: '
+read -r DASHBOARD_PORT
+set_env_value "DASHBOARD_PORT" "${DASHBOARD_PORT:-7891}"
+
+if [ "$CONFIG_SOURCE" = "gist" ]; then
+  printf 'GitHub Private Gist ID: '
   read -r GIST_ID
   printf 'GitHub Token: '
   read -r GITHUB_TOKEN
-
   set_env_value "GIST_ID" "$GIST_ID"
   set_env_value "GITHUB_TOKEN" "$GITHUB_TOKEN"
-  print_line ".env 已生成完成。"
+  print_line "已写入 gist 模式配置。后续你可以用 roo add / roo upstream add 直接在线更新规则。"
+else
+  set_env_value "GIST_ID" ""
+  set_env_value "GITHUB_TOKEN" ""
+  write_local_config
+  print_line "已生成本地规则文件：$LOCAL_CONFIG_PATH"
+  print_line "默认已经写入一条示例规则 example.com，方便你立刻启动测试。"
 fi
 
 print_line "正在使用 pm2 启动 Roo 服务..."
@@ -120,18 +157,21 @@ fi
 
 print_line "========================================"
 print_line "Roo 安装完成"
-print_line "本地代理：127.0.0.1:7890（默认）"
-print_line "运维面板：http://127.0.0.1:7891"
 print_line ""
-print_line "浏览器代理设置方法："
-print_line "1. Chrome：系统设置 -> 网络 -> 代理 -> 手动代理 -> HTTP/HTTPS 填 127.0.0.1:7890"
-print_line "2. Safari：系统设置 -> 网络 -> 代理 -> 勾选 Web 代理(HTTP) 与安全 Web 代理(HTTPS)"
-print_line "3. 如果你修改了 LOCAL_PORT，请改成你自己的端口。"
+print_line "你现在可以这样开始使用："
+print_line "1. 查看状态：roo status"
+print_line "2. 查看完整配置：roo show"
+print_line "3. 添加规则：roo add openai.com"
+print_line "4. 添加 upstream：roo upstream add residential-01 socks5://user:pass@host:1080"
+print_line "5. 手动重载配置：roo reload"
+print_line "6. 打开面板：http://127.0.0.1:${DASHBOARD_PORT:-7891}"
 print_line ""
-print_line "常用命令："
-print_line "- npm run start"
-print_line "- npm run stop"
-print_line "- npm run restart"
-print_line "- npm run logs"
-print_line "- npm run doctor"
+print_line "浏览器代理设置："
+print_line "- 地址：127.0.0.1"
+print_line "- 端口：${LOCAL_PORT:-7890}"
+print_line ""
+print_line "如果你是第一次使用，推荐接下来执行："
+print_line "- roo add openai.com"
+print_line "- roo upstream add residential-01 socks5://user:pass@host:1080"
+print_line "- roo show"
 print_line "========================================"

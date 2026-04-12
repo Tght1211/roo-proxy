@@ -5,7 +5,7 @@ const path = require('path');
 const net = require('net');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
-const { getSettings, loadEnv, fetchRemoteConfig, readConfigCache } = require('../server/config');
+const { getSettings, loadEnv, readActiveConfig, readConfigCache } = require('../server/config');
 
 const execFileAsync = promisify(execFile);
 
@@ -71,30 +71,48 @@ async function checkEnv(settings) {
   const envPath = path.join(settings.rootDir, '.env');
   const envExists = await exists(envPath);
   if (!envExists) {
-    return fail('.env 配置', '未找到 .env 文件', '请先复制 .env.example 为 .env，并填写 GIST_ID 与 GITHUB_TOKEN。');
+    return fail('.env 配置', '未找到 .env 文件', '请先执行 roo init 或复制 .env.example 为 .env。');
   }
 
-  const missingKeys = [];
-  if (!settings.gistId) {
-    missingKeys.push('GIST_ID');
-  }
-  if (!settings.githubToken) {
-    missingKeys.push('GITHUB_TOKEN');
+  if (settings.configSource === 'gist') {
+    const missingKeys = [];
+    if (!settings.gistId) {
+      missingKeys.push('GIST_ID');
+    }
+    if (!settings.githubToken) {
+      missingKeys.push('GITHUB_TOKEN');
+    }
+
+    if (missingKeys.length) {
+      return fail('.env 配置', `当前为 gist 模式，但以下字段为空：${missingKeys.join(', ')}`, '请补全这些字段，或改用 CONFIG_SOURCE=local。');
+    }
+
+    return ok('.env 配置', '.env 存在，当前为 gist 模式且关键字段已填写');
   }
 
-  if (missingKeys.length) {
-    return fail('.env 配置', `以下字段为空：${missingKeys.join(', ')}`, '请补全这些字段后再运行服务。');
-  }
-
-  return ok('.env 配置', '.env 存在且关键字段已填写');
+  return ok('.env 配置', `.env 存在，当前为 ${settings.configSource} 模式`);
 }
 
-async function checkGist(settings) {
+async function checkConfigBackend(settings) {
+  if (settings.configSource === 'gist') {
+    try {
+      const config = await readActiveConfig(settings);
+      return ok('配置后端', `gist 模式可用，当前共 ${config.rules.length} 条规则、${config.upstreams.length} 个 upstream`);
+    } catch (error) {
+      return fail('配置后端', error.message, '请检查 GIST_ID、GITHUB_TOKEN、网络连通性和 Gist 权限。');
+    }
+  }
+
+  const localExists = await exists(settings.localConfigPath);
+  if (!localExists) {
+    return fail('配置后端', `local 模式下未找到配置文件：${settings.localConfigPath}`, '请先执行 roo init，或手动创建本地配置文件。');
+  }
+
   try {
-    const { fileName, config } = await fetchRemoteConfig(settings);
-    return ok('Gist 可达性', `Gist 访问正常，配置文件 ${fileName}，共 ${config.rules.length} 条规则、${config.upstreams.length} 个 upstream`);
+    const config = await readActiveConfig(settings);
+    return ok('配置后端', `local 模式可用，配置文件 ${settings.localConfigPath}，当前共 ${config.rules.length} 条规则、${config.upstreams.length} 个 upstream`);
   } catch (error) {
-    return fail('Gist 可达性', error.message, '请检查 GIST_ID、GITHUB_TOKEN、网络连接与仓库权限。');
+    return fail('配置后端', `本地配置文件读取失败：${error.message}`, '请检查本地 JSON 配置格式是否正确。');
   }
 }
 
@@ -124,13 +142,13 @@ async function checkLocalProxyPort(settings) {
   if (result.success) {
     return ok('本地代理端口', `127.0.0.1:${settings.localPort} 端口可连接，服务可能正在运行`);
   }
-  return warn('本地代理端口', `127.0.0.1:${settings.localPort} 当前不可连接`, '如果你还没有启动 Roo，可先执行 npm run start 或 node server/index.js。');
+  return warn('本地代理端口', `127.0.0.1:${settings.localPort} 当前不可连接`, '如果你还没有启动 Roo，可先执行 npm run start、npm run serve 或 roo init。');
 }
 
 async function checkRandomUpstream(settings) {
   let config;
   try {
-    ({ config } = await fetchRemoteConfig(settings));
+    config = await readActiveConfig(settings);
   } catch (error) {
     config = await readConfigCache(settings);
   }
@@ -162,13 +180,7 @@ async function runHealthcheck() {
   results.push(await checkNodeVersion());
   results.push(await checkPm2());
   results.push(await checkEnv(settings));
-
-  if (settings.gistId && settings.githubToken) {
-    results.push(await checkGist(settings));
-  } else {
-    results.push(warn('Gist 可达性', '因 GIST_ID 或 GITHUB_TOKEN 为空，已跳过 Gist 检查', '补全 .env 后可再次执行 roo doctor。'));
-  }
-
+  results.push(await checkConfigBackend(settings));
   results.push(await checkLocalProxyPort(settings));
   results.push(await checkRandomUpstream(settings));
 

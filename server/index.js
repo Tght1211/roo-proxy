@@ -43,7 +43,7 @@ async function bootstrap() {
   if (!configManager.startAutoRefresh(async (error) => {
     await logger.error('定时刷新配置失败', { error: error.message });
   }) && !isRemoteConfigEnabled(settings)) {
-    await logger.info('未配置 Gist，已跳过自动刷新，当前使用本地默认配置或缓存配置');
+    await logger.info('未配置 Gist 自动刷新，当前使用本地配置或静态配置源');
   }
 
   const proxyServer = createProxyServer({
@@ -67,6 +67,8 @@ async function bootstrap() {
       service: 'roo',
       running: true,
       startedAtSeconds: process.uptime(),
+      configSource: settings.configSource,
+      configTarget: configManager.getMeta(),
       localProxy: {
         host: '127.0.0.1',
         port: settings.localPort,

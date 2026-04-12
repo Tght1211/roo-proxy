@@ -7,6 +7,8 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const CONFIG_CACHE_PATH = path.join(DATA_DIR, 'config-cache.json');
 const DEFAULT_CONFIG_FILE_NAME = 'roo-config.json';
+const DEFAULT_LOCAL_CONFIG_RELATIVE_PATH = path.join('data', 'roo-config.json');
+const SUPPORTED_CONFIG_SOURCES = new Set(['gist', 'local']);
 const SUPPORTED_STRATEGIES = new Set(['round-robin', 'random', 'weighted']);
 const SUPPORTED_PROTOCOLS = new Set(['http:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:']);
 
@@ -17,7 +19,7 @@ function loadEnv() {
     return;
   }
 
-  dotenv.config({ path: path.join(ROOT_DIR, '.env') });
+  dotenv.config({ path: path.join(ROOT_DIR, '.env'), override: true });
   envLoaded = true;
 }
 
@@ -26,8 +28,32 @@ function parseInteger(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function resolveConfigSource(value, fallbackSettings = process.env) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (SUPPORTED_CONFIG_SOURCES.has(normalized)) {
+    return normalized;
+  }
+
+  if ((fallbackSettings.GIST_ID || '').trim() && (fallbackSettings.GITHUB_TOKEN || '').trim()) {
+    return 'gist';
+  }
+
+  return 'local';
+}
+
+function resolveLocalConfigPath(value) {
+  const configuredPath = String(value || DEFAULT_LOCAL_CONFIG_RELATIVE_PATH).trim() || DEFAULT_LOCAL_CONFIG_RELATIVE_PATH;
+  if (path.isAbsolute(configuredPath)) {
+    return configuredPath;
+  }
+
+  return path.join(ROOT_DIR, configuredPath);
+}
+
 function getSettings() {
   loadEnv();
+
+  const configSource = resolveConfigSource(process.env.CONFIG_SOURCE, process.env);
 
   return {
     rootDir: ROOT_DIR,
@@ -42,6 +68,16 @@ function getSettings() {
     githubToken: (process.env.GITHUB_TOKEN || '').trim(),
     configRefreshIntervalMinutes: parseInteger(process.env.CONFIG_REFRESH_INTERVAL, 5),
     dashboardPort: parseInteger(process.env.DASHBOARD_PORT, 7891),
+    configSource,
+    localConfigPath: resolveLocalConfigPath(process.env.LOCAL_CONFIG_PATH),
+  };
+}
+
+function getConfigMeta(settings = getSettings()) {
+  return {
+    source: settings.configSource,
+    localConfigPath: settings.localConfigPath,
+    gistId: settings.gistId || null,
   };
 }
 
@@ -139,6 +175,16 @@ function normalizeConfig(rawConfig) {
   };
 }
 
+async function readJsonFile(filePath) {
+  const content = await fs.readFile(filePath, 'utf8');
+  return JSON.parse(content);
+}
+
+async function writeJsonFile(filePath, payload) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+}
+
 function getHeaders(settings) {
   const headers = {
     Accept: 'application/vnd.github+json',
@@ -163,7 +209,7 @@ function ensureRemoteConfigEnabled(settings) {
 }
 
 function isRemoteConfigEnabled(settings = getSettings()) {
-  return Boolean(settings.gistId && settings.githubToken);
+  return settings.configSource === 'gist' && Boolean(settings.gistId && settings.githubToken);
 }
 
 async function fetchGistPayload(settings = getSettings()) {
@@ -243,24 +289,9 @@ async function fetchRemoteConfig(settings = getSettings()) {
   };
 }
 
-async function writeConfigCache(config, settings = getSettings()) {
-  await fs.mkdir(settings.dataDir, { recursive: true });
-  await fs.writeFile(settings.configCachePath, JSON.stringify(config, null, 2), 'utf8');
-}
-
-async function readConfigCache(settings = getSettings()) {
-  try {
-    const content = await fs.readFile(settings.configCachePath, 'utf8');
-    return normalizeConfig(JSON.parse(content));
-  } catch (error) {
-    return getDefaultConfig();
-  }
-}
-
-async function updateRemoteConfig(mutator, settings = getSettings()) {
-  const { gistPayload, fileName, config } = await fetchRemoteConfig(settings);
-  const draft = JSON.parse(JSON.stringify(config));
-  const nextConfig = normalizeConfig(await mutator(draft));
+async function setRemoteConfig(config, settings = getSettings()) {
+  const { gistPayload, fileName } = await fetchRemoteConfig(settings);
+  const nextConfig = normalizeConfig(config);
 
   const response = await fetch(`https://api.github.com/gists/${settings.gistId}`, {
     method: 'PATCH',
@@ -289,6 +320,84 @@ async function updateRemoteConfig(mutator, settings = getSettings()) {
   return nextConfig;
 }
 
+async function updateRemoteConfig(mutator, settings = getSettings()) {
+  const { config } = await fetchRemoteConfig(settings);
+  const draft = JSON.parse(JSON.stringify(config));
+  const nextConfig = normalizeConfig(await mutator(draft));
+  return setRemoteConfig(nextConfig, settings);
+}
+
+async function ensureLocalConfigFile(settings = getSettings(), seedConfig = getDefaultConfig()) {
+  try {
+    await fs.access(settings.localConfigPath);
+  } catch (error) {
+    if (error && error.code !== 'ENOENT') {
+      throw error;
+    }
+
+    await writeJsonFile(settings.localConfigPath, normalizeConfig(seedConfig));
+  }
+
+  return settings.localConfigPath;
+}
+
+async function readLocalConfig(settings = getSettings()) {
+  await ensureLocalConfigFile(settings);
+  const parsed = await readJsonFile(settings.localConfigPath);
+  return normalizeConfig(parsed);
+}
+
+async function writeLocalConfig(config, settings = getSettings()) {
+  const nextConfig = normalizeConfig(config);
+  await writeJsonFile(settings.localConfigPath, nextConfig);
+  return nextConfig;
+}
+
+async function updateLocalConfig(mutator, settings = getSettings()) {
+  const current = await readLocalConfig(settings);
+  const draft = JSON.parse(JSON.stringify(current));
+  const nextConfig = normalizeConfig(await mutator(draft));
+  await writeLocalConfig(nextConfig, settings);
+  return nextConfig;
+}
+
+async function readActiveConfig(settings = getSettings()) {
+  if (settings.configSource === 'local') {
+    return readLocalConfig(settings);
+  }
+
+  const { config } = await fetchRemoteConfig(settings);
+  return config;
+}
+
+async function updateActiveConfig(mutator, settings = getSettings()) {
+  if (settings.configSource === 'local') {
+    return updateLocalConfig(mutator, settings);
+  }
+
+  return updateRemoteConfig(mutator, settings);
+}
+
+async function initializeActiveConfig(config, settings = getSettings()) {
+  if (settings.configSource === 'local') {
+    return writeLocalConfig(config, settings);
+  }
+
+  return setRemoteConfig(config, settings);
+}
+
+async function writeConfigCache(config, settings = getSettings()) {
+  await writeJsonFile(settings.configCachePath, normalizeConfig(config));
+}
+
+async function readConfigCache(settings = getSettings()) {
+  try {
+    return normalizeConfig(await readJsonFile(settings.configCachePath));
+  } catch (error) {
+    return getDefaultConfig();
+  }
+}
+
 class ConfigManager extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -299,7 +408,7 @@ class ConfigManager extends EventEmitter {
 
   async loadInitialConfig() {
     try {
-      const { config } = await fetchRemoteConfig(this.settings);
+      const config = await readActiveConfig(this.settings);
       this.currentConfig = config;
       await writeConfigCache(config, this.settings);
       this.emit('updated', config, 'startup');
@@ -316,8 +425,12 @@ class ConfigManager extends EventEmitter {
     return this.currentConfig;
   }
 
+  getMeta() {
+    return getConfigMeta(this.settings);
+  }
+
   async reloadConfig(trigger = 'manual') {
-    const { config } = await fetchRemoteConfig(this.settings);
+    const config = await readActiveConfig(this.settings);
     this.currentConfig = config;
     await writeConfigCache(config, this.settings);
     this.emit('updated', config, trigger);
@@ -355,15 +468,26 @@ class ConfigManager extends EventEmitter {
 module.exports = {
   ConfigManager,
   DEFAULT_CONFIG_FILE_NAME,
+  DEFAULT_LOCAL_CONFIG_RELATIVE_PATH,
+  ensureLocalConfigFile,
   fetchRemoteConfig,
   fetchGistPayload,
+  getConfigMeta,
   getDefaultConfig,
   getSettings,
+  initializeActiveConfig,
+  isRemoteConfigEnabled,
   loadEnv,
   normalizeConfig,
   normalizeRule,
-  isRemoteConfigEnabled,
+  readActiveConfig,
   readConfigCache,
+  readLocalConfig,
+  resolveConfigSource,
+  resolveLocalConfigPath,
+  setRemoteConfig,
+  updateActiveConfig,
   updateRemoteConfig,
   writeConfigCache,
+  writeLocalConfig,
 };
