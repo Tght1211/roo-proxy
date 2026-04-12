@@ -8,6 +8,38 @@ CLI 统一使用 `roo`。
 
 ---
 
+## 先说你这次遇到的问题根因
+
+你这次“规则和 upstream 都配置了，但访问 `ping0.cc` 还是显示机场出口”的根因，并不是规则没保存，而是：
+
+**你浏览器实际连的不是 Roo 当前真正监听的端口。**
+
+你安装时输入的是：
+
+- `LOCAL_PORT=6578`
+
+但你后面 `roo status` 看到运行中的服务却还是：
+
+- `localProxy.port=7890`
+- `dashboard.port=7891`
+
+这说明：
+
+- 旧 Roo 进程还占着端口
+- 或 pm2 没按你这次输入的端口真正启动成功
+- 于是你浏览器还在走旧监听端口对应的旧进程 / 旧链路
+
+所以你看到的出口当然还是机场节点，不是新的住宅代理。
+
+我已经针对这个问题修了安装脚本：
+
+- 启动前先删除旧的 `pm2 roo`
+- 启动前检查端口是否被占用
+- 启动后用 `curl` 验证 dashboard 是否真的在你指定端口起来了
+- 如果没有起来，直接报错退出，不再假装“安装成功”
+
+---
+
 ## 你最关心的两个问题
 
 ### 1）怎么启动这个程序？
@@ -23,7 +55,9 @@ bash scripts/install.sh
 - 自动写 `.env`
 - local 模式下自动生成本地规则文件
 - 自动安装 `roo` 命令
-- 自动用 pm2 启动 Roo
+- 自动清理旧 pm2 Roo 进程
+- 自动检查端口占用
+- 自动验证 Roo 是否真的在你指定端口启动成功
 
 如果安装脚本刚执行完但当前终端还没识别 `roo`，可以先执行：
 
@@ -53,20 +87,95 @@ npm run serve
 启动后直接用这些命令：
 
 ```bash
+roo add ping0.cc
 roo add openai.com
-roo add anthropic.com
 roo upstream add residential-01 socks5://user:pass@host:1080
 roo show
 ```
 
 含义分别是：
 
-- `roo add openai.com`：把 `openai.com` 加入需要走代理的规则列表
+- `roo add ping0.cc`：把 `ping0.cc` 加入需要走代理的规则列表
 - `roo upstream add ...`：添加一个真正的上游出口
 - `roo show`：查看当前完整配置
 
 **注意：只有命中规则的域名才会走 upstream。**
 如果你只添加了规则、没添加 upstream，那么命中规则时会失败。
+
+---
+
+## 正确验证“是不是走了住宅代理”
+
+如果你想验证 `ping0.cc` 是不是走了 Roo + 住宅 upstream，请按这个顺序来：
+
+### 第 1 步：安装后先看状态
+
+```bash
+roo status
+```
+
+重点确认：
+
+- `localProxy.port` 是你刚刚输入的端口
+- `dashboard.port` 是你刚刚输入的端口
+- `config.rules` 里有 `ping0.cc`
+- `config.upstreams` 里有你的住宅代理
+
+如果这里显示的端口不是你输入的端口，说明服务没按新配置启动成功，不能继续测浏览器。
+
+---
+
+### 第 2 步：查看完整配置
+
+```bash
+roo show
+```
+
+你应该能看到：
+
+```json
+{
+  "rules": ["ping0.cc"],
+  "upstreams": [
+    {
+      "name": "residential-01",
+      "url": "socks5://..."
+    }
+  ]
+}
+```
+
+---
+
+### 第 3 步：确认浏览器代理端口
+
+把你的浏览器 / 系统代理明确设置为：
+
+```text
+127.0.0.1:<roo status 里看到的 localProxy.port>
+```
+
+不是你记忆里的端口，不是旧端口，而是：
+
+**以 `roo status` 实际输出为准。**
+
+---
+
+### 第 4 步：再访问 `ping0.cc`
+
+如果这时还是显示机场节点信息，继续执行：
+
+```bash
+roo logs --n=50
+```
+
+看看是否真的出现了 `ping0.cc` 请求记录。
+
+如果日志里压根没有 `ping0.cc`，那就不是 Roo 没转发，而是：
+
+- 浏览器没走 Roo
+- 系统代理没生效
+- 你访问的流量没经过本地 HTTP 代理端口
 
 ---
 
@@ -110,6 +219,7 @@ data/roo-config.json
 #### 第 2 步：添加规则
 
 ```bash
+roo add ping0.cc
 roo add openai.com
 roo add claude.ai
 roo list
@@ -126,7 +236,22 @@ roo upstream list
 
 ---
 
-#### 第 4 步：启动服务
+#### 第 4 步：确认服务与端口真的正确
+
+```bash
+roo status
+```
+
+请特别核对：
+
+- `localProxy.port`
+- `dashboard.port`
+
+必须和你安装时输入的一致。
+
+---
+
+#### 第 5 步：启动服务
 
 ```bash
 npm run serve
@@ -140,23 +265,24 @@ npm run start
 
 ---
 
-#### 第 5 步：验证是否成功
+#### 第 6 步：验证是否成功
 
 ```bash
 roo status
 roo show
+roo logs --n=50
 ```
 
 打开 dashboard：
 
 ```text
-http://127.0.0.1:7891
+http://127.0.0.1:<roo status 里显示的 dashboard.port>
 ```
 
 浏览器代理设置到：
 
 ```text
-127.0.0.1:7890
+127.0.0.1:<roo status 里显示的 localProxy.port>
 ```
 
 ---
@@ -202,6 +328,7 @@ gist
 ```
 
 并输入：
+
 - `GIST_ID`
 - `GITHUB_TOKEN`
 
@@ -210,8 +337,8 @@ gist
 #### 第 3 步：在线添加规则
 
 ```bash
+roo add ping0.cc
 roo add openai.com
-roo add anthropic.com
 roo upstream add residential-01 socks5://user:pass@host:1080
 roo strategy weighted
 roo show
@@ -221,21 +348,7 @@ roo show
 
 ---
 
-#### 第 4 步：启动服务
-
-```bash
-npm run serve
-```
-
-或：
-
-```bash
-npm run start
-```
-
----
-
-#### 第 5 步：让服务重新加载规则
+#### 第 4 步：让服务重新加载规则
 
 Gist 模式下有 3 种方式：
 
@@ -257,19 +370,17 @@ POST /reload
 ## 最小可运行示例
 
 ```bash
-npm install
-npm install -g .
-roo init
-roo add openai.com
+bash scripts/install.sh
+roo add ping0.cc
 roo upstream add residential-01 socks5://user:pass@host:1080
 roo show
-npm run serve
+roo status
 ```
 
 然后把浏览器代理设置到：
 
 ```text
-127.0.0.1:7890
+127.0.0.1:<roo status 里显示的 localProxy.port>
 ```
 
 ---
@@ -288,31 +399,27 @@ npm run serve
 ### local 模式
 
 - `roo add/remove/upstream ...` 会直接写本地 JSON 文件
-- 然后你可以 `roo reload`
+- CLI 改完后会自动通知运行中的服务 reload
+- 你也可以手动 `roo reload`
 - 或通过 dashboard 的 `/reload` 重新加载
 
 ---
 
-## gist 模式快速验证
+## 怎么判断请求有没有真的经过 Roo？
 
-如果你想确认 gist 模式真的跑通，可以按下面这条最短链路操作：
+最简单的方法：
 
 ```bash
-roo init
-# 选择 gist
-# 输入 GIST_ID 和 GITHUB_TOKEN
-roo add example-gist-test.com
-roo upstream add gist-node socks5://user:pass@127.0.0.1:3080
-roo show
-roo status
+roo logs --n=50
 ```
 
-你应该能看到：
+如果你访问了 `ping0.cc`，日志里应该出现类似：
 
-- `roo show` 中出现新规则 `example-gist-test.com`
-- `roo show` 中出现新 upstream `gist-node`
-- `roo status` 中 `configSource` 为 `gist`
-- 运行中的服务会自动同步 reload，不需要你手动重启
+- `hostname: ping0.cc`
+- `rule: ping0.cc`
+- `upstream: residential-01`
+
+如果没有，那说明你的浏览器流量根本没经过 Roo。
 
 ---
 
@@ -332,8 +439,9 @@ npm run restart
 
 ```bash
 roo list
+roo add ping0.cc
 roo add openai.com
-roo remove openai.com
+roo remove ping0.cc
 ```
 
 ### upstream 管理
@@ -383,6 +491,7 @@ roo doctor
     }
   ],
   "rules": [
+    "ping0.cc",
     "openai.com",
     "anthropic.com",
     "claude.ai"
@@ -412,7 +521,7 @@ roo doctor
 
 1. 打开系统设置中的网络代理。
 2. 选择手动代理。
-3. 将 HTTP 和 HTTPS 代理都设置为 `127.0.0.1:7890`。
+3. 将 HTTP 和 HTTPS 代理都设置为 `127.0.0.1:<roo status 里显示的 localProxy.port>`。
 4. 保存后重新打开浏览器测试。
 
 ### Safari
@@ -421,58 +530,27 @@ roo doctor
 2. 进入当前网络的“详情”。
 3. 打开“代理”。
 4. 勾选“Web 代理(HTTP)” 和 “安全 Web 代理(HTTPS)”。
-5. 地址填写 `127.0.0.1`，端口填写 `7890`。
-
----
-
-## 环境变量
-
-```env
-# 代理服务
-LOCAL_PORT=7890                  # 本地监听端口
-LOG_LEVEL=info                   # 日志级别 debug/info/error
-LOG_RETAIN_DAYS=7                # 日志保留天数
-
-# 配置后端
-CONFIG_SOURCE=local              # local 或 gist，推荐新手先用 local
-LOCAL_CONFIG_PATH=data/roo-config.json  # 本地配置文件路径（CONFIG_SOURCE=local 时生效）
-
-# 规则配置源（CONFIG_SOURCE=gist 时生效）
-GIST_ID=                         # GitHub Private Gist ID
-GITHUB_TOKEN=                    # GitHub Personal Access Token
-CONFIG_REFRESH_INTERVAL=5        # 规则刷新间隔（分钟，仅 gist 模式自动刷新）
-
-# 运维面板
-DASHBOARD_PORT=7891              # 面板监听端口
-```
+5. 地址填写 `127.0.0.1`，端口填写 `roo status` 显示的端口。
 
 ---
 
 ## FAQ
 
-### 1. 安装完后提示 `roo: command not found` 怎么办？
+### 1. 安装后我输入了 6578，但 `roo status` 显示还是 7890，怎么办？
 
-先执行：
+这说明 Roo 没按你这次的新端口真正启动成功，多半是旧进程或端口占用导致的。现在新版安装脚本会直接检查并阻止这种“假成功”。
 
-```bash
-hash -r
-```
+### 2. 为什么我添加了规则和 upstream，访问 ping0.cc 还是旧出口？
 
-如果还是不行，说明当前 shell 还没刷新 PATH，先直接用：
+先看：
 
 ```bash
-node cli/index.js --help
+roo status
+roo show
+roo logs --n=50
 ```
 
-也可以手动执行：
-
-```bash
-npm install -g .
-```
-
-### 2. 为什么我添加了规则，但还是没走代理？
-
-因为还需要至少一个可用 upstream。规则只决定“哪些域名要走代理”，upstream 才是真正的出口。
+如果 `roo logs` 没看到 `ping0.cc`，说明浏览器没有走 Roo。最常见原因是浏览器代理端口配错了。
 
 ### 3. local 和 gist 应该选哪个？
 
@@ -512,37 +590,6 @@ npm run restart
 详细维护与开发说明见：
 
 - [开发指南](docs/development.md)
-
----
-
-## 首发 Release 文案
-
-- [docs/release-v1.0.0.md](docs/release-v1.0.0.md)
-
----
-
-## Roadmap
-
-- [Roadmap](docs/roadmap.md)
-
----
-
-## 目录结构
-
-```text
-roo/
-├── server/
-├── cli/
-├── dashboard/
-├── scripts/
-├── docs/
-├── examples/
-├── data/
-├── .github/workflows/
-├── .env.example
-├── package.json
-└── README.md
-```
 
 ---
 
