@@ -293,6 +293,29 @@ npm run serve
 
 ---
 
+## gist 模式快速验证
+
+如果你想确认 gist 模式真的跑通，可以按下面这条最短链路操作：
+
+```bash
+roo init
+# 选择 gist
+# 输入 GIST_ID 和 GITHUB_TOKEN
+roo add example-gist-test.com
+roo upstream add gist-node socks5://user:pass@127.0.0.1:3080
+roo show
+roo status
+```
+
+你应该能看到：
+
+- `roo show` 中出现新规则 `example-gist-test.com`
+- `roo show` 中出现新 upstream `gist-node`
+- `roo status` 中 `configSource` 为 `gist`
+- 运行中的服务会自动同步 reload，不需要你手动重启
+
+---
+
 ## 常用命令速查
 
 ### 初始化与启动
