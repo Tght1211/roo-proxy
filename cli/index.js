@@ -79,12 +79,21 @@ async function loadCurrentConfig() {
   }
 }
 
+async function syncRunningService() {
+  const result = await tryDashboard('/reload', { method: 'POST' });
+  return Boolean(result && result.ok);
+}
+
 async function mutateConfig(message, mutator) {
   const settings = getRuntimeSettings();
   const nextConfig = await updateActiveConfig(mutator, settings);
   await writeConfigCache(nextConfig, settings);
+  const reloaded = await syncRunningService();
   console.log(message);
   console.log(`当前配置后端：${getConfigTargetLabel(settings)}`);
+  if (reloaded) {
+    console.log('运行中的 Roo 服务已自动重新加载配置。');
+  }
   printJson(nextConfig);
 }
 
