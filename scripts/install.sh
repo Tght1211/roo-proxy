@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
 EXAMPLE_ENV_FILE="$ROOT_DIR/.env.example"
 LOCAL_CONFIG_PATH="data/roo-config.json"
+GLOBAL_NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+GLOBAL_NPM_BIN="${GLOBAL_NPM_PREFIX:+$GLOBAL_NPM_PREFIX/bin}"
 
 print_line() {
   printf '%s\n' "$1"
@@ -97,6 +99,9 @@ fi
 print_line "开始安装项目依赖..."
 npm install --prefix "$ROOT_DIR"
 
+print_line "正在安装 roo CLI 命令..."
+npm install -g "$ROOT_DIR"
+
 if [ ! -f "$EXAMPLE_ENV_FILE" ]; then
   print_line ".env.example 不存在，安装脚本无法继续。"
   exit 1
@@ -169,6 +174,20 @@ print_line ""
 print_line "浏览器代理设置："
 print_line "- 地址：127.0.0.1"
 print_line "- 端口：${LOCAL_PORT:-7890}"
+print_line ""
+if command -v roo >/dev/null 2>&1; then
+  print_line "roo 命令已安装成功，可直接使用。"
+else
+  print_line "警告：roo 命令已链接，但当前 shell 可能还没刷新 PATH。"
+  if [ -n "$GLOBAL_NPM_BIN" ]; then
+    print_line "请确认以下目录在你的 PATH 中："
+    print_line "- $GLOBAL_NPM_BIN"
+    print_line "如果刚安装完成，可执行：hash -r"
+    print_line "临时使用也可以直接执行：$GLOBAL_NPM_BIN/roo --help"
+  else
+    print_line "你也可以临时在项目目录中执行：node cli/index.js --help"
+  fi
+fi
 print_line ""
 print_line "如果你是第一次使用，推荐接下来执行："
 print_line "- roo add openai.com"

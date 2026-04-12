@@ -22,11 +22,26 @@ bash scripts/install.sh
 - 选择配置模式（`local` 或 `gist`）
 - 自动写 `.env`
 - local 模式下自动生成本地规则文件
+- 自动安装 `roo` 命令
 - 自动用 pm2 启动 Roo
+
+如果安装脚本刚执行完但当前终端还没识别 `roo`，可以先执行：
+
+```bash
+hash -r
+```
+
+如果还是不行，可以临时直接执行：
+
+```bash
+node cli/index.js --help
+```
 
 如果你不想用安装脚本，也可以：
 
 ```bash
+npm install
+npm install -g .
 roo init
 npm run serve
 ```
@@ -64,26 +79,24 @@ Roo 现在支持两种配置模式：
 
 ### 模式一：local（推荐新手）
 
-这是最容易跑起来的方式喵。
-
 #### 第 1 步：安装并初始化
 
 ```bash
 bash scripts/install.sh
 ```
 
+如果安装后当前 shell 还没识别 `roo`：
+
+```bash
+hash -r
+```
+
 或者：
 
 ```bash
 npm install
-cp .env.example .env
+npm install -g .
 roo init
-```
-
-在初始化时选择：
-
-```text
-local
 ```
 
 初始化完成后，默认本地配置文件在：
@@ -96,21 +109,9 @@ data/roo-config.json
 
 #### 第 2 步：添加规则
 
-例如让 `openai.com` 走代理：
-
 ```bash
 roo add openai.com
-```
-
-再加一条：
-
-```bash
 roo add claude.ai
-```
-
-查看规则：
-
-```bash
 roo list
 ```
 
@@ -118,21 +119,8 @@ roo list
 
 #### 第 3 步：添加 upstream
 
-例如添加一个 socks5 上游代理：
-
 ```bash
 roo upstream add residential-01 socks5://user:pass@host:1080
-```
-
-如果你有第二个出口：
-
-```bash
-roo upstream add residential-02 http://user:pass@host2:8080 --weight 2
-```
-
-查看当前 upstream：
-
-```bash
 roo upstream list
 ```
 
@@ -154,15 +142,8 @@ npm run start
 
 #### 第 5 步：验证是否成功
 
-查看状态：
-
 ```bash
 roo status
-```
-
-查看完整配置：
-
-```bash
 roo show
 ```
 
@@ -181,8 +162,6 @@ http://127.0.0.1:7891
 ---
 
 ### 模式二：gist（适合在线更新规则）
-
-如果你希望**不登录服务器、不改本地文件，也能在线更新规则**，就用这个模式。
 
 #### 第 1 步：准备 GitHub Private Gist
 
@@ -205,17 +184,24 @@ http://127.0.0.1:7891
 #### 第 2 步：初始化 Roo
 
 ```bash
+bash scripts/install.sh
+```
+
+或者：
+
+```bash
+npm install
+npm install -g .
 roo init
 ```
 
-选择：
+然后选择：
 
 ```text
 gist
 ```
 
-然后输入：
-
+并输入：
 - `GIST_ID`
 - `GITHUB_TOKEN`
 
@@ -223,20 +209,15 @@ gist
 
 #### 第 3 步：在线添加规则
 
-初始化完成后，下面这些命令会**直接写到远端 Gist**：
-
 ```bash
 roo add openai.com
 roo add anthropic.com
 roo upstream add residential-01 socks5://user:pass@host:1080
 roo strategy weighted
-```
-
-查看完整配置：
-
-```bash
 roo show
 ```
+
+这些命令会直接更新远端 Gist。
 
 ---
 
@@ -275,9 +256,9 @@ POST /reload
 
 ## 最小可运行示例
 
-如果你只想看一遍最小操作链路，就照着执行：
-
 ```bash
+npm install
+npm install -g .
 roo init
 roo add openai.com
 roo upstream add residential-01 socks5://user:pass@host:1080
@@ -291,17 +272,13 @@ npm run serve
 127.0.0.1:7890
 ```
 
-这样当你访问 `openai.com` 时，就会走上游代理；其他域名保持直连。
-
 ---
 
 ## 规则配置是否支持在线更新？
 
-支持，而且分两种情况：
+支持。
 
 ### Gist 模式
-
-这是标准在线更新模式：
 
 - `roo add/remove/upstream ...` 会直接更新远端 Gist
 - server 会按 `CONFIG_REFRESH_INTERVAL` 自动刷新
@@ -310,16 +287,9 @@ npm run serve
 
 ### local 模式
 
-这是本地文件模式：
-
 - `roo add/remove/upstream ...` 会直接写本地 JSON 文件
 - 然后你可以 `roo reload`
 - 或通过 dashboard 的 `/reload` 重新加载
-
-所以无论哪种模式，你都可以“改配置后马上生效”，只是：
-
-- `gist` = 远端在线更新
-- `local` = 本地在线更新
 
 ---
 
@@ -455,46 +425,29 @@ DASHBOARD_PORT=7891              # 面板监听端口
 
 ---
 
-## CI
-
-仓库已经包含基础 GitHub Actions 工作流：
-
-- 安装依赖
-- 检查 CLI help
-- 运行 doctor
-- 启动服务做 dashboard / proxy 冒烟测试
-
-工作流文件：
-
-- [.github/workflows/ci.yml](.github/workflows/ci.yml)
-
----
-
 ## FAQ
 
-### 1. 为什么我看完 README 还是不知道先做什么？
+### 1. 安装完后提示 `roo: command not found` 怎么办？
 
-如果你是第一次使用，直接执行：
-
-```bash
-bash scripts/install.sh
-```
-
-或者：
+先执行：
 
 ```bash
-roo init
+hash -r
 ```
 
-然后再：
+如果还是不行，说明当前 shell 还没刷新 PATH，先直接用：
 
 ```bash
-roo add openai.com
-roo upstream add residential-01 socks5://user:pass@host:1080
-npm run serve
+node cli/index.js --help
 ```
 
-### 2. 我添加了规则，但为什么还是没走代理？
+也可以手动执行：
+
+```bash
+npm install -g .
+```
+
+### 2. 为什么我添加了规则，但还是没走代理？
 
 因为还需要至少一个可用 upstream。规则只决定“哪些域名要走代理”，upstream 才是真正的出口。
 
