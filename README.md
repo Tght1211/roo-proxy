@@ -27,6 +27,50 @@ curl -fsSL https://raw.githubusercontent.com/Tght1211/roo-proxy/main/scripts/boo
 
 ---
 
+## 更新现有安装
+
+### 推荐更新方式
+
+如果你已经有 Roo 仓库目录，后续更新推荐直接在那个目录执行：
+
+```bash
+bash scripts/update.sh
+```
+
+它会自动：
+
+- 拉取最新代码
+- 安装依赖
+- 刷新全局 `roo` 命令
+- 重启 Roo
+
+### 老版本用户怎么更新
+
+如果你是之前手动安装的老版本，推荐这样更新：
+
+```bash
+cd /你的/roo-proxy/目录
+bash scripts/update.sh
+```
+
+这个方式会保留：
+
+- `.env`
+- `data/roo-config.json`
+
+也就是说，你原来的端口、upstream 和规则不会被清空。
+
+### 不建议的做法
+
+不建议直接重复跑旧版安装脚本来“赌更新”，尤其是很老的版本。  
+虽然现在的安装脚本已经改成会保留已有本地规则文件，但对老版本用户来说，最稳妥的仍然是：
+
+```bash
+bash scripts/update.sh
+```
+
+---
+
 ## 日常运维命令
 
 如果你已经全局安装过 `roo`，日常基本只需要记这几条：

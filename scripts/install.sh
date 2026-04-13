@@ -47,6 +47,11 @@ PY
 
 write_local_config() {
   local config_path="$ROOT_DIR/$LOCAL_CONFIG_PATH"
+  if [ -f "$config_path" ]; then
+    print_line "检测到已有本地规则文件，已保留：$LOCAL_CONFIG_PATH"
+    return 0
+  fi
+
   mkdir -p "$(dirname "$config_path")"
   cat > "$config_path" <<'EOF'
 {
