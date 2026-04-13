@@ -2,9 +2,50 @@
 
 > 像袋鼠跳跃一样，把命中规则的流量二次跳跃到干净的住宅 IP 出口。
 
-Roo 是一个面向个人使用场景的代理管理系统。它会在本地启动一个 HTTP CONNECT 代理，根据规则决定某个域名是否需要经过上游代理；命中规则时走配置好的住宅 IP / SOCKS / HTTP upstream，未命中时保持直连。
+Roo 是一个面向个人使用场景的代理管理系统。它会在本地启动一个 HTTP CONNECT 代理，根据规则决定某个域名是否需要经过上游代理；命中规则时走你指定的住宅 IP / SOCKS / HTTP upstream，未命中时则按 `default_route` 决定是直连还是走默认 upstream。
 
 CLI 统一使用 `roo`。
+
+---
+
+## 一键部署
+
+如果你只是想把 Roo 直接装到一台机器上，推荐直接执行这一条：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tght1211/roo-proxy/main/scripts/bootstrap.sh | bash
+```
+
+默认会把仓库放到 `~/.roo-proxy`，然后自动进入交互式安装流程。
+
+如果你想自定义目录或分支，也可以这样：
+
+```bash
+ROO_INSTALL_DIR="$HOME/roo-proxy" ROO_REPO_REF=main \
+curl -fsSL https://raw.githubusercontent.com/Tght1211/roo-proxy/main/scripts/bootstrap.sh | bash
+```
+
+---
+
+## 日常运维命令
+
+如果你已经全局安装过 `roo`，日常基本只需要记这几条：
+
+```bash
+roo up          # 启动并托管到 pm2
+roo down        # 停止
+roo restart     # 重启
+roo ps          # 看简洁运行状态
+roo ip          # 看当前通过 Roo 走出去的出口 IP
+roo show        # 看完整配置
+roo logs --n=50 # 看最近日志
+```
+
+如果你还没全局安装，也可以把 `roo` 换成：
+
+```bash
+node cli/index.js
+```
 
 ---
 
@@ -47,10 +88,11 @@ CLI 统一使用 `roo`。
 最简单的方法：
 
 ```bash
-bash scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/Tght1211/roo-proxy/main/scripts/bootstrap.sh | bash
 ```
 
 它会引导你：
+- 自动拉取 / 更新仓库
 - 选择配置模式（`local` 或 `gist`）
 - 自动写 `.env`
 - local 模式下自动生成本地规则文件
@@ -71,13 +113,15 @@ hash -r
 node cli/index.js --help
 ```
 
-如果你不想用安装脚本，也可以：
+如果你不想用远程一键部署，也可以本地执行：
 
 ```bash
+git clone https://github.com/Tght1211/roo-proxy.git
+cd roo-proxy
 npm install
 npm install -g .
 roo init
-npm run serve
+roo up
 ```
 
 ---
@@ -87,20 +131,35 @@ npm run serve
 启动后直接用这些命令：
 
 ```bash
-roo add ping0.cc
-roo add openai.com
+roo upstream add vpn-default http://127.0.0.1:6578
 roo upstream add residential-01 socks5://user:pass@host:1080
+roo default via vpn-default
+roo add ping0.cc --via residential-01
+roo add openai.com --via residential-01
+roo add api.openai.com --exact --via residential-01
+roo add cursor --keyword --via residential-01
+roo add 1.2.3.0/24 --ipv4-cidr --via residential-01
+roo add 2001:db8::/32 --ipv6-cidr --via residential-01
+roo add US --country --via residential-01
+roo add US-CA --region --via residential-01
 roo show
 ```
 
 含义分别是：
 
-- `roo add ping0.cc`：把 `ping0.cc` 加入需要走代理的规则列表
-- `roo upstream add ...`：添加一个真正的上游出口
+- `roo upstream add vpn-default ...`：把你现有的本地 VPN / 代理接入 Roo
+- `roo default via vpn-default`：设置未命中规则时的默认出口
+- `roo add ping0.cc --via residential-01`：把 `ping0.cc` 指定到住宅 upstream
+- `roo add api.openai.com --exact ...`：按精确域名匹配
+- `roo add cursor --keyword ...`：按域名关键词匹配
+- `roo add 1.2.3.0/24 --ipv4-cidr ...`：按 IPv4 网段匹配
+- `roo add 2001:db8::/32 --ipv6-cidr ...`：按 IPv6 网段匹配
+- `roo add US --country ...`：按国家代码匹配
+- `roo add US-CA --region ...`：按国家-地区代码匹配
 - `roo show`：查看当前完整配置
 
-**注意：只有命中规则的域名才会走 upstream。**
-如果你只添加了规则、没添加 upstream，那么命中规则时会失败。
+**注意：每条规则现在都可以单独绑定 upstream。**
+如果规则命中了，但它绑定的 upstream 不可用，请求会直接失败并写入日志。
 
 ---
 
@@ -254,8 +313,21 @@ roo status
 #### 第 5 步：启动服务
 
 ```bash
-npm run serve
+roo up
 ```
+
+---
+
+## 发布
+
+如果你要自己打包一个 release，可以执行：
+
+```bash
+npm test
+npm run release:pack
+```
+
+生成的包会放在本地 `release/` 目录里，更新说明建议放到 `docs/release-vX.Y.Z.md`。
 
 或使用 pm2：
 

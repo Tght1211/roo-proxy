@@ -116,6 +116,25 @@ async function checkConfigBackend(settings) {
   }
 }
 
+async function checkRoutingProfile(settings) {
+  let config;
+  try {
+    config = await readActiveConfig(settings);
+  } catch (error) {
+    config = await readConfigCache(settings);
+  }
+
+  const defaultRoute = config.default_route && typeof config.default_route === 'object'
+    ? config.default_route
+    : { action: 'direct', upstreams: [] };
+
+  if (defaultRoute.action === 'proxy' && Array.isArray(defaultRoute.upstreams) && defaultRoute.upstreams.length) {
+    return ok('默认出口', `未命中规则时将走 upstream：${defaultRoute.upstreams.join(', ')}`);
+  }
+
+  return ok('默认出口', '未命中规则时直连 / 走系统路由');
+}
+
 async function probeTcp(host, port, timeoutMs = 5000) {
   return new Promise((resolve) => {
     let settled = false;
@@ -161,7 +180,8 @@ async function checkRandomUpstream(settings) {
   const selected = enabled[Math.floor(Math.random() * enabled.length)];
   try {
     const parsed = new URL(selected.url);
-    const port = Number(parsed.port) || (parsed.protocol.startsWith('http') ? 80 : 1080);
+    const port = Number(parsed.port)
+      || (parsed.protocol === 'https:' ? 443 : parsed.protocol === 'http:' ? 80 : 1080);
     const result = await probeTcp(parsed.hostname, port, 4000);
     if (result.success) {
       return ok('upstream 连通性', `随机检测 ${selected.name} 成功，可连接到 ${parsed.hostname}:${port}`);
@@ -181,6 +201,7 @@ async function runHealthcheck() {
   results.push(await checkPm2());
   results.push(await checkEnv(settings));
   results.push(await checkConfigBackend(settings));
+  results.push(await checkRoutingProfile(settings));
   results.push(await checkLocalProxyPort(settings));
   results.push(await checkRandomUpstream(settings));
 

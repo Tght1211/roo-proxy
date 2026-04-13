@@ -17,13 +17,23 @@ roo list
 ### 添加规则
 
 ```bash
-roo add openai.com
+roo add openai.com --via residential-01
+roo add api.openai.com --exact --via residential-01
+roo add cursor --keyword --via residential-01
+roo add 1.2.3.0/24 --ipv4-cidr --via residential-01
+roo add US --country --via residential-01
 ```
 
 ### 添加 upstream
 
 ```bash
 roo upstream add residential-01 socks5://user:pass@host1:1080 --weight 2
+```
+
+### 设置默认出口
+
+```bash
+roo default via vpn-default
 ```
 
 ### 切换策略

@@ -43,16 +43,31 @@ class UpstreamBalancer {
     this.state = nextState;
   }
 
-  getEnabledUpstreams() {
-    return Array.from(this.state.values()).filter((item) => item.enabled);
+  filterUpstreams(items, options = {}) {
+    const names = Array.isArray(options.names) && options.names.length
+      ? new Set(options.names)
+      : null;
+
+    return items.filter((item) => {
+      if (names && !names.has(item.name)) {
+        return false;
+      }
+
+      return true;
+    });
   }
 
-  getHealthyUpstreams() {
-    return this.getEnabledUpstreams().filter((item) => item.healthy !== false);
+  getEnabledUpstreams(options = {}) {
+    const enabled = Array.from(this.state.values()).filter((item) => item.enabled);
+    return this.filterUpstreams(enabled, options);
   }
 
-  pickUpstream() {
-    const candidates = this.getHealthyUpstreams();
+  getHealthyUpstreams(options = {}) {
+    return this.getEnabledUpstreams(options).filter((item) => item.healthy !== false);
+  }
+
+  pickUpstream(options = {}) {
+    const candidates = this.getHealthyUpstreams(options);
     if (!candidates.length) {
       return null;
     }
@@ -84,7 +99,11 @@ class UpstreamBalancer {
       return;
     }
 
+    const wasUnhealthy = upstream.healthy === false;
     upstream.healthy = true;
+    if (wasUnhealthy) {
+      upstream.lastRecoveryAt = new Date().toISOString();
+    }
     upstream.lastError = null;
   }
 
@@ -106,7 +125,8 @@ class UpstreamBalancer {
     return new Promise((resolve) => {
       let settled = false;
       const parsed = new URL(upstream.url);
-      const port = Number(parsed.port) || (parsed.protocol.startsWith('http') ? 80 : 1080);
+      const port = Number(parsed.port)
+        || (parsed.protocol === 'https:' ? 443 : parsed.protocol === 'http:' ? 80 : 1080);
       const socket = net.createConnection({
         host: parsed.hostname,
         port,

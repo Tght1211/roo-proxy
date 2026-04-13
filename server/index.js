@@ -5,6 +5,24 @@ const { UpstreamBalancer } = require('./balancer');
 const { createProxyServer } = require('./proxy');
 const { createDashboard } = require('../dashboard');
 
+async function detectRunningRoo(settings) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${settings.dashboardPort}/status`);
+    if (!response.ok) {
+      return null;
+    }
+
+    const status = await response.json();
+    if (status && status.service === 'roo' && status.localProxy && status.localProxy.port === settings.localPort) {
+      return status;
+    }
+  } catch (error) {
+    return null;
+  }
+
+  return null;
+}
+
 async function bootstrap() {
   loadEnv();
   const settings = getSettings();
@@ -107,8 +125,19 @@ async function bootstrap() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-bootstrap().catch((error) => {
+bootstrap().catch(async (error) => {
   const message = error && error.message ? error.message : '未知错误';
+
+  if (message.includes('EADDRINUSE')) {
+    loadEnv();
+    const settings = getSettings();
+    const runningStatus = await detectRunningRoo(settings);
+    if (runningStatus) {
+      console.log(`Roo 已经在运行：127.0.0.1:${settings.localPort}（Dashboard: 127.0.0.1:${settings.dashboardPort}）`);
+      process.exit(0);
+    }
+  }
+
   console.error(`Roo 启动失败：${message}`);
   process.exit(1);
 });

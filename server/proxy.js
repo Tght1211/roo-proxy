@@ -1,5 +1,17 @@
 const ProxyChain = require('proxy-chain');
-const { matchRule } = require('./router');
+const { formatRuleLabel, resolveRoute } = require('./router');
+
+function toErrorMessage(error) {
+  if (!error) {
+    return null;
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  return String(error.message || error);
+}
 
 function createProxyServer(options = {}) {
   const {
@@ -28,7 +40,7 @@ function createProxyServer(options = {}) {
       status,
       durationMs,
       isDirect: requestInfo.isDirect,
-      error: extra.error || null,
+      error: toErrorMessage(extra.error),
     };
 
     if (status === 'success' && requestInfo.upstreamName) {
@@ -52,7 +64,7 @@ function createProxyServer(options = {}) {
       status: 'failed',
       durationMs: 0,
       isDirect: false,
-      error,
+      error: toErrorMessage(error),
     };
 
     stats.recordRequest(payload);
@@ -65,17 +77,22 @@ function createProxyServer(options = {}) {
     verbose: false,
     prepareRequestFunction: async ({ hostname, connectionId }) => {
       const config = configManager.getConfig();
-      const rule = matchRule(hostname, config.rules);
-      const upstream = rule ? balancer.pickUpstream() : null;
+      const route = await resolveRoute(hostname, config);
+      const rule = route.rule ? formatRuleLabel(route.rule) : null;
+      const upstream = route.action === 'proxy'
+        ? balancer.pickUpstream({ names: route.upstreams })
+        : null;
 
-      if (rule && !upstream) {
-        const message = '当前没有可用的上游代理，请检查 upstream 健康状态。';
+      if (route.action === 'proxy' && !upstream) {
+        const scopedMessage = route.upstreams.length
+          ? `当前没有可用的上游代理，请检查这些 upstream：${route.upstreams.join(', ')}`
+          : '当前没有可用的上游代理，请检查 upstream 健康状态。';
         await recordImmediateFailure({
           hostname,
           rule,
-          error: message,
+          error: scopedMessage,
         });
-        throw new ProxyChain.RequestError(message, 502);
+        throw new ProxyChain.RequestError(scopedMessage, 502);
       }
 
       requestMap.set(connectionId, {
@@ -84,7 +101,7 @@ function createProxyServer(options = {}) {
         rule,
         upstreamName: upstream ? upstream.name : null,
         startedAt: Date.now(),
-        isDirect: !upstream,
+        isDirect: route.action === 'direct',
         completed: false,
       });
 

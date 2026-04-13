@@ -2,6 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { EventEmitter } = require('events');
 const dotenv = require('dotenv');
+const ipaddr = require('ipaddr.js');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT_DIR, 'data');
@@ -10,7 +11,33 @@ const DEFAULT_CONFIG_FILE_NAME = 'roo-config.json';
 const DEFAULT_LOCAL_CONFIG_RELATIVE_PATH = path.join('data', 'roo-config.json');
 const SUPPORTED_CONFIG_SOURCES = new Set(['gist', 'local']);
 const SUPPORTED_STRATEGIES = new Set(['round-robin', 'random', 'weighted']);
-const SUPPORTED_PROTOCOLS = new Set(['http:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:']);
+const SUPPORTED_PROTOCOLS = new Set(['http:', 'https:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:']);
+const SUPPORTED_RULE_TYPES = new Set([
+  'domain-suffix',
+  'domain-exact',
+  'domain-keyword',
+  'ipv4-cidr',
+  'ipv6-cidr',
+  'geo-country',
+  'geo-region',
+]);
+const RULE_TYPE_ALIASES = new Map([
+  ['domain', 'domain-suffix'],
+  ['suffix', 'domain-suffix'],
+  ['domain-suffix', 'domain-suffix'],
+  ['exact', 'domain-exact'],
+  ['domain-exact', 'domain-exact'],
+  ['keyword', 'domain-keyword'],
+  ['domain-keyword', 'domain-keyword'],
+  ['ipv4', 'ipv4-cidr'],
+  ['ipv4-cidr', 'ipv4-cidr'],
+  ['ipv6', 'ipv6-cidr'],
+  ['ipv6-cidr', 'ipv6-cidr'],
+  ['country', 'geo-country'],
+  ['geo-country', 'geo-country'],
+  ['region', 'geo-region'],
+  ['geo-region', 'geo-region'],
+]);
 
 let envLoaded = false;
 
@@ -84,16 +111,233 @@ function getConfigMeta(settings = getSettings()) {
 function getDefaultConfig() {
   return {
     balance_strategy: 'round-robin',
+    default_route: {
+      action: 'direct',
+      upstreams: [],
+    },
     upstreams: [],
     rules: [],
   };
 }
 
-function normalizeRule(rule) {
+function normalizeDomain(rule) {
   return String(rule || '')
     .trim()
     .toLowerCase()
     .replace(/^\.+|\.+$/g, '');
+}
+
+function normalizeKeyword(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeCountryCode(value, label) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase();
+
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    throw new Error(`${label} 必须是 2 位国家代码，例如 US、SG、JP`);
+  }
+
+  return normalized;
+}
+
+function normalizeRegionCode(value, label) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/_/g, '-');
+
+  if (!/^[A-Z]{2}-[A-Z0-9]{1,3}$/.test(normalized)) {
+    throw new Error(`${label} 必须使用国家-地区代码，例如 US-CA、CN-11`);
+  }
+
+  return normalized;
+}
+
+function normalizeCidr(value, expectedKind, label) {
+  const rawValue = String(value || '').trim();
+  let parsed;
+  try {
+    parsed = ipaddr.parseCIDR(rawValue);
+  } catch (error) {
+    throw new Error(`${label} 不是合法的 CIDR 网段`);
+  }
+
+  const [address, prefixLength] = parsed;
+  const kind = address.kind();
+  if (kind !== expectedKind) {
+    throw new Error(`${label} 必须是 ${expectedKind === 'ipv4' ? 'IPv4' : 'IPv6'} 网段`);
+  }
+
+  return `${address.toNormalizedString()}/${prefixLength}`;
+}
+
+function resolveRuleType(type, label) {
+  const normalized = String(type || '').trim().toLowerCase();
+  const ruleType = RULE_TYPE_ALIASES.get(normalized);
+  if (!ruleType || !SUPPORTED_RULE_TYPES.has(ruleType)) {
+    throw new Error(`${label} 使用了不支持的规则类型：${type}`);
+  }
+
+  return ruleType;
+}
+
+function normalizeRuleValue(type, value, label) {
+  if (type === 'domain-suffix' || type === 'domain-exact') {
+    const normalized = normalizeDomain(value);
+    if (!normalized || !normalized.includes('.')) {
+      throw new Error(`${label} 的域名格式无效`);
+    }
+    return normalized;
+  }
+
+  if (type === 'domain-keyword') {
+    const normalized = normalizeKeyword(value);
+    if (!normalized) {
+      throw new Error(`${label} 的关键词不能为空`);
+    }
+    return normalized;
+  }
+
+  if (type === 'ipv4-cidr') {
+    return normalizeCidr(value, 'ipv4', label);
+  }
+
+  if (type === 'ipv6-cidr') {
+    return normalizeCidr(value, 'ipv6', label);
+  }
+
+  if (type === 'geo-country') {
+    return normalizeCountryCode(value, label);
+  }
+
+  if (type === 'geo-region') {
+    return normalizeRegionCode(value, label);
+  }
+
+  throw new Error(`${label} 使用了不支持的规则类型：${type}`);
+}
+
+function formatRuleLabel(rule) {
+  if (!rule || !rule.type || !rule.value) {
+    return null;
+  }
+
+  return `${rule.type}:${rule.value}`;
+}
+
+function normalizeUpstreamNames(names, upstreamNameSet, label) {
+  if (names == null) {
+    return [];
+  }
+
+  if (!Array.isArray(names)) {
+    throw new Error(`${label} 的 upstreams 必须是数组`);
+  }
+
+  const seenNames = new Set();
+  return names
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .filter((name) => {
+      if (!upstreamNameSet.has(name)) {
+        throw new Error(`${label} 引用了不存在的 upstream：${name}`);
+      }
+
+      if (seenNames.has(name)) {
+        return false;
+      }
+
+      seenNames.add(name);
+      return true;
+    });
+}
+
+function normalizeRoute(route, upstreamNameSet, label) {
+  if (route == null) {
+    return {
+      action: 'direct',
+      upstreams: [],
+    };
+  }
+
+  if (typeof route === 'string') {
+    const normalizedRoute = route.trim().toLowerCase();
+    if (normalizedRoute === 'direct') {
+      return {
+        action: 'direct',
+        upstreams: [],
+      };
+    }
+
+    throw new Error(`${label} 配置无效，仅支持字符串值 direct`);
+  }
+
+  if (typeof route !== 'object') {
+    throw new Error(`${label} 配置无效`);
+  }
+
+  const action = String(route.action || (Array.isArray(route.upstreams) && route.upstreams.length ? 'proxy' : 'direct'))
+    .trim()
+    .toLowerCase();
+
+  if (!['direct', 'proxy'].includes(action)) {
+    throw new Error(`${label} 的 action 仅支持 direct 或 proxy`);
+  }
+
+  const upstreams = normalizeUpstreamNames(route.upstreams, upstreamNameSet, label);
+
+  if (action === 'direct' && upstreams.length) {
+    throw new Error(`${label} 使用 direct 时不能再配置 upstreams`);
+  }
+
+  return {
+    action,
+    upstreams,
+  };
+}
+
+function normalizeRule(rule, index, upstreamNameSet) {
+  if (typeof rule === 'string') {
+    const value = normalizeRuleValue('domain-suffix', rule, `第 ${index + 1} 条规则`);
+    if (!value) {
+      return null;
+    }
+
+    return {
+      type: 'domain-suffix',
+      value,
+      action: 'proxy',
+      upstreams: [],
+    };
+  }
+
+  if (!rule || typeof rule !== 'object') {
+    throw new Error(`第 ${index + 1} 条规则配置无效`);
+  }
+
+  const label = `第 ${index + 1} 条规则`;
+  const type = rule.domain != null
+    ? 'domain-suffix'
+    : resolveRuleType(rule.type || 'domain-suffix', label);
+  const rawValue = rule.domain != null ? rule.domain : rule.value;
+
+  if (rawValue == null || String(rawValue).trim() === '') {
+    throw new Error(`${label} 缺少 value`);
+  }
+
+  const value = normalizeRuleValue(type, rawValue, label);
+  const normalizedRoute = normalizeRoute(rule, upstreamNameSet, `规则 ${formatRuleLabel({ type, value })}`);
+  return {
+    type,
+    value,
+    action: normalizedRoute.action,
+    upstreams: normalizedRoute.upstreams,
+  };
 }
 
 function normalizeUpstream(upstream, index = 0) {
@@ -153,23 +397,26 @@ function normalizeConfig(rawConfig) {
         })
     : [];
 
+  const defaultRoute = normalizeRoute(input.default_route, upstreamNames, 'default_route');
   const seenRules = new Set();
   const rules = Array.isArray(input.rules)
     ? input.rules
-        .map(normalizeRule)
+        .map((item, index) => normalizeRule(item, index, upstreamNames))
         .filter(Boolean)
         .filter((rule) => {
-          if (seenRules.has(rule)) {
+          const key = formatRuleLabel(rule);
+          if (seenRules.has(key)) {
             return false;
           }
 
-          seenRules.add(rule);
+          seenRules.add(key);
           return true;
         })
     : [];
 
   return {
     balance_strategy: balanceStrategy,
+    default_route: defaultRoute,
     upstreams,
     rules,
   };
@@ -479,7 +726,12 @@ module.exports = {
   isRemoteConfigEnabled,
   loadEnv,
   normalizeConfig,
+  normalizeDomain,
+  normalizeRuleValue,
   normalizeRule,
+  resolveRuleType,
+  SUPPORTED_RULE_TYPES,
+  formatRuleLabel,
   readActiveConfig,
   readConfigCache,
   readLocalConfig,

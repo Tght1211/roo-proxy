@@ -36,6 +36,7 @@ node cli/index.js doctor
 
 负责：
 - 域名规则匹配
+- 默认出口解析
 - 精确匹配与子域名匹配
 
 ### `server/balancer.js`
@@ -49,8 +50,8 @@ node cli/index.js doctor
 
 负责：
 - 基于 `proxy-chain` 接收代理请求
-- 命中规则时选 upstream
-- 未命中规则时直连
+- 命中规则时按规则指定的 upstream 集合选出口
+- 未命中规则时按 `default_route` 决定走直连还是默认 upstream
 - 记录请求结果、日志与统计
 
 ### `server/logger.js`
