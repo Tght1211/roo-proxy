@@ -1,6 +1,6 @@
 {
   "name": "roo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Roo 个人代理管理系统",
   "main": "server/index.js",
   "bin": {
@@ -12,7 +12,9 @@
     "restart": "pm2 restart roo",
     "logs": "pm2 logs roo",
     "doctor": "node scripts/healthcheck.js",
-    "serve": "node server/index.js"
+    "serve": "node server/index.js",
+    "test": "node --test",
+    "release:pack": "mkdir -p release && npm pack --pack-destination ./release"
   },
   "keywords": [
     "proxy",
@@ -30,6 +32,8 @@
     "commander": "^14.0.0",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
+    "geoip-lite": "^1.4.10",
+    "ipaddr.js": "^2.3.0",
     "proxy-chain": "^2.7.1"
   }
 }

@@ -1,6 +1,16 @@
 {
   "balance_strategy": "round-robin",
+  "default_route": {
+    "action": "proxy",
+    "upstreams": ["vpn-default"]
+  },
   "upstreams": [
+    {
+      "name": "vpn-default",
+      "url": "http://127.0.0.1:6578",
+      "weight": 1,
+      "enabled": true
+    },
     {
       "name": "residential-01",
       "url": "socks5://user:pass@residential-host-1:1080",
@@ -15,8 +25,20 @@
     }
   ],
   "rules": [
-    "openai.com",
-    "anthropic.com",
-    "claude.ai"
+    {
+      "domain": "openai.com",
+      "action": "proxy",
+      "upstreams": ["residential-01", "residential-02"]
+    },
+    {
+      "domain": "anthropic.com",
+      "action": "proxy",
+      "upstreams": ["residential-01", "residential-02"]
+    },
+    {
+      "domain": "claude.ai",
+      "action": "proxy",
+      "upstreams": ["residential-01", "residential-02"]
+    }
   ]
 }

@@ -5,3 +5,4 @@ data/
 stats.json
 .DS_Store
 .pm2/
+release/
