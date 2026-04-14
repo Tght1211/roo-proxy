@@ -21,6 +21,7 @@ function createProxyServer(options = {}) {
     balancer,
     logger,
     stats,
+    chainManager,
   } = options;
 
   const requestMap = new Map();
@@ -105,8 +106,13 @@ function createProxyServer(options = {}) {
         completed: false,
       });
 
+      let upstreamProxyUrl = upstream ? upstream.url : null;
+      if (upstream && upstream.via) {
+        upstreamProxyUrl = await chainManager.getChainUrl(upstream.via, upstream.url);
+      }
+
       return {
-        upstreamProxyUrl: upstream ? upstream.url : null,
+        upstreamProxyUrl,
         customTag: {
           connectionId,
           hostname,

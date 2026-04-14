@@ -3,7 +3,43 @@ const { Logger } = require('./logger');
 const { StatsManager } = require('./stats');
 const { UpstreamBalancer } = require('./balancer');
 const { createProxyServer } = require('./proxy');
+const { ChainProxyManager } = require('./chain');
 const { createDashboard } = require('../dashboard');
+
+function maskSensitiveUrl(rawUrl) {
+  if (!rawUrl) {
+    return rawUrl;
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.username) {
+      parsed.username = '****';
+    }
+    if (parsed.password) {
+      parsed.password = '****';
+    }
+    return parsed.toString();
+  } catch (error) {
+    return rawUrl;
+  }
+}
+
+function sanitizeConfigForStatus(config) {
+  const nextConfig = config && typeof config === 'object'
+    ? JSON.parse(JSON.stringify(config))
+    : { upstreams: [], rules: [] };
+
+  nextConfig.upstreams = Array.isArray(nextConfig.upstreams)
+    ? nextConfig.upstreams.map((upstream) => ({
+        ...upstream,
+        url: maskSensitiveUrl(upstream.url),
+        via: upstream.via ? maskSensitiveUrl(upstream.via) : upstream.via,
+      }))
+    : [];
+
+  return nextConfig;
+}
 
 async function detectRunningRoo(settings) {
   try {
@@ -36,16 +72,19 @@ async function bootstrap() {
   const configManager = new ConfigManager({ settings });
   const stats = new StatsManager({ filePath: settings.statsFilePath });
   const balancer = new UpstreamBalancer({ logger });
+  const chainManager = new ChainProxyManager();
 
   await stats.load();
   stats.startAutoFlush();
 
   const config = await configManager.loadInitialConfig();
   balancer.updateConfig(config);
+  await chainManager.syncUpstreams(config.upstreams);
   balancer.startHealthCheck();
 
   configManager.on('updated', async (nextConfig, trigger) => {
     balancer.updateConfig(nextConfig);
+    await chainManager.syncUpstreams(nextConfig.upstreams);
     await logger.info('配置已更新', {
       trigger,
       strategy: nextConfig.balance_strategy,
@@ -71,6 +110,7 @@ async function bootstrap() {
     balancer,
     logger,
     stats,
+    chainManager,
   });
 
   const dashboard = createDashboard({
@@ -95,7 +135,7 @@ async function bootstrap() {
         host: '127.0.0.1',
         port: settings.dashboardPort,
       },
-      config: configManager.getConfig(),
+      config: sanitizeConfigForStatus(configManager.getConfig()),
       upstreamHealth: balancer.getSnapshot(),
       statsSummary: stats.getStats(),
       env: {
@@ -118,6 +158,7 @@ async function bootstrap() {
     await stats.persist().catch(() => {});
     await dashboard.close().catch(() => {});
     await proxyServer.close().catch(() => {});
+    await chainManager.stopAll().catch(() => {});
     process.exit(0);
   };
 

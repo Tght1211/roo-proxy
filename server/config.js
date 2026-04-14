@@ -349,6 +349,7 @@ function normalizeUpstream(upstream, index = 0) {
   const url = String(upstream.url || '').trim();
   const weight = Number.parseInt(upstream.weight, 10);
   const enabled = upstream.enabled !== false;
+  const via = upstream.via == null ? null : String(upstream.via).trim();
 
   if (!name) {
     throw new Error(`第 ${index + 1} 个 upstream 缺少名称 name`);
@@ -369,9 +370,23 @@ function normalizeUpstream(upstream, index = 0) {
     throw new Error(`upstream ${name} 使用了不支持的协议：${parsedUrl.protocol}`);
   }
 
+  let parsedViaUrl = null;
+  if (via) {
+    try {
+      parsedViaUrl = new URL(via);
+    } catch (error) {
+      throw new Error(`upstream ${name} 的 via 格式不正确`);
+    }
+
+    if (!SUPPORTED_PROTOCOLS.has(parsedViaUrl.protocol) && !['http:', 'https:'].includes(parsedViaUrl.protocol)) {
+      throw new Error(`upstream ${name} 的 via 使用了不支持的协议：${parsedViaUrl.protocol}`);
+    }
+  }
+
   return {
     name,
     url,
+    via: parsedViaUrl ? parsedViaUrl.toString() : null,
     weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
     enabled,
   };
