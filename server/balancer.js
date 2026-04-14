@@ -162,6 +162,24 @@ class UpstreamBalancer {
     });
   }
 
+  async probeEnabledUpstreams() {
+    const targets = this.getEnabledUpstreams();
+    for (const upstream of targets) {
+      const wasHealthy = upstream.healthy !== false;
+      const healthyNow = await this.probeUpstream(upstream);
+
+      if (!healthyNow && wasHealthy && this.logger) {
+        this.logger.warn
+          ? this.logger.warn(`upstream ${upstream.name} 连通性异常：${upstream.lastError || '探活失败'}`)
+          : this.logger.info(`upstream ${upstream.name} 连通性异常：${upstream.lastError || '探活失败'}`);
+      }
+
+      if (healthyNow && !wasHealthy && this.logger) {
+        this.logger.info(`upstream ${upstream.name} 已恢复健康状态`);
+      }
+    }
+  }
+
   async probeUnhealthyUpstreams() {
     const targets = this.getEnabledUpstreams().filter((item) => item.healthy === false);
     for (const upstream of targets) {
@@ -174,14 +192,19 @@ class UpstreamBalancer {
 
   startHealthCheck() {
     this.stopHealthCheck();
-    this.timer = setInterval(() => {
-      this.probeUnhealthyUpstreams().catch((error) => {
+
+    const runProbe = () => {
+      this.probeEnabledUpstreams().catch((error) => {
         if (this.logger) {
           this.logger.error(`upstream 探活失败：${error.message}`);
         }
       });
-    }, this.probeIntervalMs);
+    };
+
+    runProbe();
+    this.timer = setInterval(runProbe, this.probeIntervalMs);
   }
+
 
   stopHealthCheck() {
     if (this.timer) {

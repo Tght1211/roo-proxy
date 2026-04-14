@@ -152,6 +152,72 @@ async function readEffectiveEnvSettings() {
   };
 }
 
+function formatProbeError(error) {
+  if (!error) {
+    return '探测失败';
+  }
+
+  const stderr = String(error.stderr || '').trim();
+  if (stderr) {
+    const lines = stderr.split('\n').map((line) => line.trim()).filter(Boolean);
+    return lines[lines.length - 1] || stderr;
+  }
+
+  if (error.killed) {
+    return '探测超时';
+  }
+
+  return String(error.message || error);
+}
+
+async function probeUpstreamConnectivity(upstream, chainManager) {
+  let probeProxyUrl = upstream.url;
+
+  if (upstream.via && chainManager && typeof chainManager.getChainUrl === 'function') {
+    try {
+      probeProxyUrl = await chainManager.getChainUrl(upstream.via, upstream.url);
+    } catch (error) {
+      return {
+        name: upstream.name,
+        healthy: upstream.healthy !== false,
+        viaEnabled: true,
+        ok: false,
+        ip: null,
+        meta: null,
+        error: `via 链路不可用：${formatProbeError(error)}`,
+      };
+    }
+  }
+
+  try {
+    const ip = await fetchIpByCurl(['-sS', '--max-time', '8', '--proxy', probeProxyUrl, 'https://api.ip.sb/ip']);
+    if (!ip) {
+      throw new Error('返回为空');
+    }
+
+    const meta = await lookupIpMeta(ip);
+    return {
+      name: upstream.name,
+      healthy: upstream.healthy !== false,
+      viaEnabled: Boolean(upstream.via),
+      ok: true,
+      ip,
+      meta,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      name: upstream.name,
+      healthy: upstream.healthy !== false,
+      viaEnabled: Boolean(upstream.via),
+      ok: false,
+      ip: null,
+      meta: null,
+      error: formatProbeError(error),
+    };
+  }
+}
+
 async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
   const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
 
@@ -165,6 +231,20 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
   const envProxyIp = envProxyIpResult.status === 'fulfilled' ? envProxyIpResult.value : null;
   const rooRouteIp = rooRouteIpResult.status === 'fulfilled' ? rooRouteIpResult.value : null;
 
+  const enabledUpstreams = balancer && typeof balancer.getEnabledUpstreams === 'function'
+    ? balancer.getEnabledUpstreams()
+    : [];
+  const checkTargets = enabledUpstreams.slice(0, 6);
+  const upstreamChecks = await Promise.all(checkTargets.map((upstream) => probeUpstreamConnectivity(upstream, chainManager)));
+  const upstreamCheckMap = new Map(upstreamChecks.map((item) => [item.name, item]));
+  const upstreamCheckSummary = {
+    totalEnabled: enabledUpstreams.length,
+    checked: upstreamChecks.length,
+    ok: upstreamChecks.filter((item) => item.ok).length,
+    failed: upstreamChecks.filter((item) => !item.ok).length,
+    skipped: Math.max(enabledUpstreams.length - upstreamChecks.length, 0),
+  };
+
   let rooProxyIp = rooRouteIp;
   let rooProbeMode = 'roo-route';
   let rooProbeUpstream = null;
@@ -175,30 +255,37 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
 
   if (healthyUpstreams.length) {
     const selected = healthyUpstreams[0];
-    try {
-      let probeProxyUrl = selected.url;
-      if (selected.via && chainManager && typeof chainManager.getChainUrl === 'function') {
-        probeProxyUrl = await chainManager.getChainUrl(selected.via, selected.url);
-      }
-      const upstreamProbeIp = await fetchIpByCurl(['-s', '--proxy', probeProxyUrl, 'https://api.ip.sb/ip']);
-      if (upstreamProbeIp) {
-        rooProxyIp = upstreamProbeIp;
-        rooProbeMode = 'upstream-probe';
-        rooProbeUpstream = selected.name;
-      }
-    } catch (error) {
-      // Ignore upstream probe errors and keep route-based result.
+    const selectedCheck = upstreamCheckMap.get(selected.name);
+    if (selectedCheck && selectedCheck.ok && selectedCheck.ip) {
+      rooProxyIp = selectedCheck.ip;
+      rooProbeMode = 'upstream-probe';
+      rooProbeUpstream = selected.name;
+    } else if (selectedCheck && !selectedCheck.ok) {
+      rooProbeMode = 'upstream-probe-failed';
+      rooProbeUpstream = selected.name;
     }
   }
 
-  const [directMeta, envProxyMeta, rooProxyMeta] = await Promise.all([
+  const [directMeta, envProxyMeta] = await Promise.all([
     lookupIpMeta(directIp),
     lookupIpMeta(envProxyIp),
-    lookupIpMeta(rooProxyIp),
   ]);
 
+  let rooProxyMeta = null;
+  if (rooProbeMode === 'upstream-probe' && rooProbeUpstream && upstreamCheckMap.get(rooProbeUpstream)?.meta) {
+    rooProxyMeta = upstreamCheckMap.get(rooProbeUpstream).meta;
+  } else {
+    rooProxyMeta = await lookupIpMeta(rooProxyIp);
+  }
+
   let routeHint;
-  if (rooProbeMode === 'upstream-probe') {
+  if (upstreamCheckSummary.failed > 0) {
+    const firstFailed = upstreamChecks.find((item) => !item.ok);
+    const failureHint = firstFailed
+      ? `${firstFailed.name}：${firstFailed.error || '连接失败'}`
+      : '请检查上游地址、账号密码、协议和 via 配置';
+    routeHint = `检测到 ${upstreamCheckSummary.failed} 个上游连通异常，建议先修复上游。示例：${failureHint}`;
+  } else if (rooProbeMode === 'upstream-probe') {
     routeHint = `经 Roo 出口优先展示上游探测结果（upstream: ${rooProbeUpstream}）。若与按规则结果不一致，请检查该测试域名是否命中代理规则。`;
   } else if (envProxy) {
     routeHint = '当前 Roo 进程存在环境代理；如果系统还有 TUN/VPN，则“本机直连出口”反映的是系统默认路由出口。';
@@ -222,6 +309,8 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
     rooProbeMode,
     rooProbeUpstream,
     routeHint,
+    upstreamCheckSummary,
+    upstreamChecks,
   };
 }
 
@@ -751,6 +840,110 @@ function formatIpMeta(meta) {
   return parts.join(' · ');
 }
 
+function getDiagValue(meta, fallback, emptyText = '获取失败') {
+  if (meta && meta.ip) return formatIpMeta(meta);
+  if (fallback) return fallback;
+  return emptyText;
+}
+
+function renderNetDiag(netDiag) {
+  const egressCandidates = [
+    { label: '本机默认出口', value: getDiagValue(netDiag.directMeta, netDiag.directIp), key: netDiag.directMeta?.ip || netDiag.directIp || 'direct' },
+    ...(netDiag.envProxy ? [{ label: '环境代理出口', value: getDiagValue(netDiag.envProxyMeta, netDiag.envProxyIp, '未启用'), key: netDiag.envProxyMeta?.ip || netDiag.envProxyIp || 'env' }] : []),
+    { label: netDiag.rooProbeUpstream ? ('当前上游出口（' + netDiag.rooProbeUpstream + '）') : '经 Roo 出口', value: getDiagValue(netDiag.rooProxyMeta, netDiag.rooProxyIp), key: netDiag.rooProxyMeta?.ip || netDiag.rooProxyIp || 'roo' },
+  ];
+
+  const mergedEgress = [];
+  egressCandidates.forEach((item) => {
+    const existing = mergedEgress.find((entry) => entry.key === item.key && entry.value === item.value);
+    if (existing) {
+      existing.labels.push(item.label);
+    } else {
+      mergedEgress.push({ key: item.key, value: item.value, labels: [item.label] });
+    }
+  });
+
+  const envItems = [
+    netDiag.allProxy ? ['ALL_PROXY', netDiag.allProxy] : null,
+    netDiag.httpProxy ? ['HTTP_PROXY', netDiag.httpProxy] : null,
+    netDiag.httpsProxy ? ['HTTPS_PROXY', netDiag.httpsProxy] : null,
+    netDiag.noProxy ? ['NO_PROXY', netDiag.noProxy] : null,
+  ].filter(Boolean);
+
+  const checks = Array.isArray(netDiag.upstreamChecks) ? netDiag.upstreamChecks : [];
+  const summary = netDiag.upstreamCheckSummary || { totalEnabled: 0, checked: 0, ok: 0, failed: 0, skipped: 0 };
+  const hasFailedChecks = summary.failed > 0;
+
+  return [
+    '<div style="display:grid;gap:16px">',
+      hasFailedChecks
+        ? ('<div style="border:1px solid #fecaca;background:#fff1f2;color:#991b1b;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7">'
+            + '<strong>检测到上游连通性异常</strong><br>'
+            + '已自动预检 ' + esc(String(summary.checked)) + ' 个上游，其中失败 ' + esc(String(summary.failed)) + ' 个。请先修复上游配置，再测试站点访问。'
+          + '</div>')
+        : '',
+      '<div>',
+        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">出口结果</div>',
+        '<div style="display:grid;gap:10px">',
+          mergedEgress.map((item) =>
+            '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff">'
+              + '<div style="font-size:12px;color:var(--text-3);margin-bottom:4px">' + esc(item.labels.join(' / ')) + '</div>'
+              + '<div style="font-size:13px;color:var(--text);line-height:1.6;word-break:break-all">' + esc(item.value) + '</div>'
+            + '</div>'
+          ).join(''),
+        '</div>',
+      '</div>',
+      '<div>',
+        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">上游连通性预检</div>',
+        '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff">',
+          '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">启用上游 ' + esc(String(summary.totalEnabled || 0)) + ' 个，已检查 ' + esc(String(summary.checked || 0)) + ' 个，成功 ' + esc(String(summary.ok || 0)) + ' 个，失败 ' + esc(String(summary.failed || 0)) + ' 个' + ((summary.skipped || 0) > 0 ? ('，未检查 ' + esc(String(summary.skipped))) : '') + '</div>',
+          checks.length
+            ? ('<div style="display:grid;gap:8px">'
+                + checks.map((item) =>
+                  '<div style="border:1px solid ' + (item.ok ? 'var(--border-soft)' : '#fecaca') + ';border-radius:8px;padding:10px 12px;background:' + (item.ok ? '#fff' : '#fff7f7') + '">'
+                    + '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center">'
+                      + '<div style="font-size:13px;color:var(--text);font-weight:600">' + esc(item.name) + '</div>'
+                      + '<div style="font-size:12px;color:' + (item.ok ? '#065f46' : '#991b1b') + '">' + (item.ok ? '可连通' : '不可连通') + '</div>'
+                    + '</div>'
+                    + '<div style="margin-top:6px;font-size:12px;color:var(--text-2);line-height:1.6;word-break:break-all">'
+                      + (item.ok
+                        ? ('出口：' + esc(getDiagValue(item.meta, item.ip)))
+                        : ('错误：' + esc(item.error || '连接失败')))
+                      + (item.viaEnabled ? ' · 含 via 链路' : '')
+                    + '</div>'
+                  + '</div>'
+                ).join('')
+              + '</div>')
+            : '<div style="font-size:12px;color:var(--text-3)">当前没有启用上游，暂未执行预检。</div>',
+        '</div>',
+      '</div>',
+      '<div>',
+        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">代理环境</div>',
+        '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff">',
+          '<div style="font-size:12px;color:var(--text-3);margin-bottom:4px">当前 Roo 环境代理</div>',
+          '<div style="font-size:13px;color:var(--text);line-height:1.6;word-break:break-all">' + esc(netDiag.envProxy || '未设置') + '</div>',
+          envItems.length
+            ? ('<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-soft);display:grid;gap:6px">'
+                + envItems.map(([k, v]) =>
+                  '<div style="display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:start">'
+                    + '<div style="font-size:12px;color:var(--text-3)">' + esc(k) + '</div>'
+                    + '<div style="font-size:12.5px;color:var(--text);word-break:break-all">' + esc(v) + '</div>'
+                  + '</div>'
+                ).join('')
+              + '</div>')
+            : '<div style="margin-top:10px;font-size:12px;color:var(--text-3)">当前没有设置环境代理变量</div>',
+        '</div>',
+      '</div>',
+      '<div>',
+        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">说明</div>',
+        '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff;font-size:13px;color:var(--text);line-height:1.7">'
+          + esc(netDiag.routeHint || 'Roo 当前会结合环境代理、路由规则和上游健康状态决定实际出口。')
+        + '</div>',
+      '</div>',
+    '</div>'
+  ].join('');
+}
+
 function renderEnvSettings() {
   const current = envSettings?.effective || {};
   document.getElementById('envHttpProxy').value = current.HTTP_PROXY || '';
@@ -835,24 +1028,8 @@ function renderOverview(s, diagnostics) {
   document.getElementById('ovInfo').innerHTML = info.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
 
   const netDiag = diagnostics || {};
-  const diagItems = [
-    ['Roo 环境代理', netDiag.envProxy || '未设置'],
-    ['HTTP_PROXY', netDiag.httpProxy || '-'],
-    ['HTTPS_PROXY', netDiag.httpsProxy || '-'],
-    ['ALL_PROXY', netDiag.allProxy || '-'],
-    ['NO_PROXY', netDiag.noProxy || '-'],
-    ['本机直连出口', netDiag.directMeta ? formatIpMeta(netDiag.directMeta) : (netDiag.directIp || '获取失败')],
-    ['环境代理出口', netDiag.envProxyMeta ? formatIpMeta(netDiag.envProxyMeta) : (netDiag.envProxyIp || '未启用/获取失败')],
-    ['经 Roo 出口', netDiag.rooProxyMeta ? formatIpMeta(netDiag.rooProxyMeta) : (netDiag.rooProxyIp || '获取失败')],
-    ['当前说明', netDiag.routeHint || (netDiag.envProxy
-      ? 'Roo 进程本身运行在代理环境中，默认会先经过环境代理，再命中你配置的上游/规则'
-      : 'Roo 当前没有环境代理，流量仅按规则决定是否走上游')]
-  ];
-  document.getElementById('ovNetDiag').innerHTML = diagItems
-    .map(([k, v]) => '<dt>' + esc(k) + '</dt><dd style="max-width:520px;white-space:normal;word-break:break-all;text-align:right">' + esc(v) + '</dd>')
-    .join('');
+  document.getElementById('ovNetDiag').innerHTML = renderNetDiag(netDiag);
 
-}
 
 // ---- Config ----
 function renderConfig() {
