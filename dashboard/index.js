@@ -152,10 +152,10 @@ async function readEffectiveEnvSettings() {
   };
 }
 
-async function getNetworkDiagnostics(localProxyPort) {
+async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
   const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
 
-  const [directIpResult, envProxyIpResult, rooProxyIpResult] = await Promise.allSettled([
+  const [directIpResult, envProxyIpResult, rooRouteIpResult] = await Promise.allSettled([
     fetchIpByCurl(['-s', '--noproxy', '*', 'https://api.ip.sb/ip']),
     envProxy ? fetchIpByCurl(['-s', 'https://api.ip.sb/ip']) : Promise.resolve(null),
     fetchIpByCurl(['-s', '--proxy', `http://127.0.0.1:${localProxyPort}`, 'https://api.ip.sb/ip']),
@@ -163,13 +163,48 @@ async function getNetworkDiagnostics(localProxyPort) {
 
   const directIp = directIpResult.status === 'fulfilled' ? directIpResult.value : null;
   const envProxyIp = envProxyIpResult.status === 'fulfilled' ? envProxyIpResult.value : null;
-  const rooProxyIp = rooProxyIpResult.status === 'fulfilled' ? rooProxyIpResult.value : null;
+  const rooRouteIp = rooRouteIpResult.status === 'fulfilled' ? rooRouteIpResult.value : null;
+
+  let rooProxyIp = rooRouteIp;
+  let rooProbeMode = 'roo-route';
+  let rooProbeUpstream = null;
+
+  const healthyUpstreams = balancer && typeof balancer.getHealthyUpstreams === 'function'
+    ? balancer.getHealthyUpstreams()
+    : [];
+
+  if (healthyUpstreams.length) {
+    const selected = healthyUpstreams[0];
+    try {
+      let probeProxyUrl = selected.url;
+      if (selected.via && chainManager && typeof chainManager.getChainUrl === 'function') {
+        probeProxyUrl = await chainManager.getChainUrl(selected.via, selected.url);
+      }
+      const upstreamProbeIp = await fetchIpByCurl(['-s', '--proxy', probeProxyUrl, 'https://api.ip.sb/ip']);
+      if (upstreamProbeIp) {
+        rooProxyIp = upstreamProbeIp;
+        rooProbeMode = 'upstream-probe';
+        rooProbeUpstream = selected.name;
+      }
+    } catch (error) {
+      // Ignore upstream probe errors and keep route-based result.
+    }
+  }
 
   const [directMeta, envProxyMeta, rooProxyMeta] = await Promise.all([
     lookupIpMeta(directIp),
     lookupIpMeta(envProxyIp),
     lookupIpMeta(rooProxyIp),
   ]);
+
+  let routeHint;
+  if (rooProbeMode === 'upstream-probe') {
+    routeHint = `经 Roo 出口优先展示上游探测结果（upstream: ${rooProbeUpstream}）。若与按规则结果不一致，请检查该测试域名是否命中代理规则。`;
+  } else if (envProxy) {
+    routeHint = '当前 Roo 进程存在环境代理；如果系统还有 TUN/VPN，则“本机直连出口”反映的是系统默认路由出口。';
+  } else {
+    routeHint = '当前未设置环境代理；“本机直连出口”反映的是系统默认路由出口（含可能存在的 TUN/VPN）。';
+  }
 
   return {
     envProxy,
@@ -179,13 +214,14 @@ async function getNetworkDiagnostics(localProxyPort) {
     noProxy: process.env.NO_PROXY || null,
     directIp,
     envProxyIp,
+    rooRouteIp,
     rooProxyIp,
     directMeta,
     envProxyMeta,
     rooProxyMeta,
-    routeHint: envProxy
-      ? '当前 Roo 进程存在环境代理；如果系统还有 TUN/VPN，则“本机直连出口”反映的是系统默认路由出口。'
-      : '当前未设置环境代理；“本机直连出口”反映的是系统默认路由出口（含可能存在的 TUN/VPN）。',
+    rooProbeMode,
+    rooProbeUpstream,
+    routeHint,
   };
 }
 
@@ -1142,6 +1178,7 @@ function createDashboard(options = {}) {
   const port = options.port;
   const configManager = options.configManager;
   const balancer = options.balancer;
+  const chainManager = options.chainManager;
   const stats = options.stats;
   const logger = options.logger;
   const logsDir = options.logsDir;
@@ -1173,7 +1210,7 @@ function createDashboard(options = {}) {
 
   app.get('/network-diagnostics', async (req, res) => {
     try {
-      const diagnostics = await getNetworkDiagnostics(configManager.settings.localPort);
+      const diagnostics = await getNetworkDiagnostics(configManager.settings.localPort, balancer, chainManager);
       res.json(diagnostics);
     } catch (error) {
       res.status(500).json({ message: error.message || '获取网络诊断失败' });

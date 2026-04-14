@@ -118,6 +118,7 @@ async function bootstrap() {
     port: settings.dashboardPort,
     configManager,
     balancer,
+    chainManager,
     logger,
     stats,
     logsDir: settings.logsDir,
