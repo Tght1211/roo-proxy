@@ -26,6 +26,13 @@ const {
   writeConfigCache,
 } = require('../server/config');
 const { readPersistedStats } = require('../server/stats');
+const {
+  disableSystemProxy,
+  enableSystemProxy,
+  formatSystemProxySummary,
+  getSystemProxyStatus,
+  restoreSystemProxy,
+} = require('../server/system-proxy');
 const { runHealthcheck, printHealthcheck } = require('../scripts/healthcheck');
 
 const ENV_PATH = path.resolve(__dirname, '..', '.env');
@@ -86,7 +93,7 @@ function printRuntimeSummary(status) {
   console.log(`面板: 127.0.0.1:${status.dashboard.port}`);
   console.log(`${defaultRoute}`);
   console.log(`规则数: ${rules}`);
-  console.log(`upstream 数: ${upstreams}`);
+  console.log(`出口节点数: ${upstreams}`);
 }
 
 function printList(items, emptyMessage) {
@@ -264,12 +271,12 @@ function ensureValidUrl(url) {
   try {
     parsed = new URL(url);
   } catch (error) {
-    throw new Error('upstream URL 格式无效，请使用 http://、https:// 或 socks5:// 开头的完整地址。');
+    throw new Error('出口节点 URL 格式无效，请使用 http://、https:// 或 socks5:// 开头的完整地址。');
   }
 
   const supported = ['http:', 'https:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:'];
   if (!supported.includes(parsed.protocol)) {
-    throw new Error(`不支持的 upstream 协议：${parsed.protocol}`);
+    throw new Error(`不支持的出口节点协议：${parsed.protocol}`);
   }
 
   return parsed.toString();
@@ -278,7 +285,7 @@ function ensureValidUrl(url) {
 function normalizeUpstreamName(name) {
   const normalized = String(name || '').trim();
   if (!normalized) {
-    throw new Error('upstream 名称不能为空。');
+    throw new Error('出口节点名称不能为空。');
   }
   return normalized;
 }
@@ -304,7 +311,7 @@ function ensureRuleUpstreamsExist(config, upstreamNames) {
   const knownUpstreams = new Set((config.upstreams || []).map((item) => item.name));
   upstreamNames.forEach((name) => {
     if (!knownUpstreams.has(name)) {
-      throw new Error(`引用的 upstream 不存在：${name}`);
+      throw new Error(`引用的出口节点不存在：${name}`);
     }
   });
 }
@@ -370,8 +377,8 @@ function formatRuleSummary(rule) {
       : rule;
 
   const action = normalizedRule.action === 'direct' ? '直连 / 走系统路由' : (normalizedRule.upstreams || []).length
-    ? `指定 upstream: ${(normalizedRule.upstreams || []).join(', ')}`
-    : '所有可用 upstream';
+    ? `指定出口节点: ${(normalizedRule.upstreams || []).join(', ')}`
+    : '所有可用出口节点';
 
   return `${label} -> ${action}`;
 }
@@ -462,10 +469,10 @@ async function runInitWizard() {
       });
     }
 
-    const addUpstreamAnswer = (await rl.question('现在是否添加第一个 upstream？（y/N）： ')).trim().toLowerCase();
+    const addUpstreamAnswer = (await rl.question('现在是否添加第一个出口节点？（y/N）： ')).trim().toLowerCase();
     if (addUpstreamAnswer === 'y') {
-      const upstreamName = normalizeUpstreamName((await rl.question('upstream 名称： ')).trim());
-      const upstreamUrl = ensureValidUrl((await rl.question('upstream URL： ')).trim());
+      const upstreamName = normalizeUpstreamName((await rl.question('出口节点名称： ')).trim());
+      const upstreamUrl = ensureValidUrl((await rl.question('出口节点 URL： ')).trim());
       const upstreamWeight = Number.parseInt((await rl.question('权重（默认 1）： ')).trim() || '1', 10);
       draftConfig.upstreams.push({
         name: upstreamName,
@@ -474,7 +481,7 @@ async function runInitWizard() {
         enabled: true,
       });
 
-      const defaultRouteAnswer = (await rl.question('未命中规则的流量是否默认也走这个 upstream？（y/N）： ')).trim().toLowerCase();
+      const defaultRouteAnswer = (await rl.question('未命中规则的流量是否默认也走这个出口节点？（y/N）： ')).trim().toLowerCase();
       if (defaultRouteAnswer === 'y') {
         draftConfig.default_route = {
           action: 'proxy',
@@ -504,7 +511,7 @@ async function runInitWizard() {
     console.log('- 启动服务：npm run serve');
     console.log('- 查看当前配置：roo show');
     console.log('- 添加规则：roo add openai.com --via residential-01');
-    console.log('- 添加 upstream：roo upstream add residential-01 socks5://user:pass@host:1080');
+    console.log('- 添加出口节点：roo upstream add residential-01 socks5://user:pass@host:1080');
     console.log('- 设置默认出口：roo default via vpn-default');
     console.log(`- 打开面板：http://127.0.0.1:${settings.dashboardPort}`);
     console.log(`- 浏览器代理地址：127.0.0.1:${settings.localPort}`);
@@ -515,7 +522,7 @@ async function runInitWizard() {
 
 program
   .name('roo')
-  .description('Roo 个人代理管理系统 CLI')
+  .description('Roo 链式代理编排 CLI')
   .version('1.0.0');
 
 program
@@ -676,7 +683,7 @@ program
   .option('--ipv6-cidr', '按 IPv6 网段匹配')
   .option('--country', '按国家代码匹配，例如 US')
   .option('--region', '按国家-地区代码匹配，例如 US-CA')
-  .option('--via <upstreams>', '指定命中这条规则时使用哪些 upstream，多个名称用逗号分隔')
+  .option('--via <upstreams>', '指定命中这条规则时使用哪些出口节点，多个名称用逗号分隔')
   .option('--direct', '命中这条规则时直连 / 走系统路由')
   .description('添加规则')
   .action(async (value, options) => {
@@ -755,11 +762,11 @@ defaultRoute
 
 defaultRoute
   .command('via <upstreams...>')
-  .description('将未命中规则的流量设置为走指定 upstream')
+  .description('将未命中规则的流量设置为走指定出口节点')
   .action(async (upstreams) => {
     const normalizedUpstreams = parseUpstreamList(upstreams.join(','));
     if (!normalizedUpstreams.length) {
-      throw new Error('请至少提供一个 upstream 名称。');
+      throw new Error('请至少提供一个出口节点名称。');
     }
 
     await mutateConfig(`已更新默认出口：${normalizedUpstreams.join(', ')}`, (config) => {
@@ -772,11 +779,11 @@ defaultRoute
     });
   });
 
-const upstream = program.command('upstream').description('管理 upstream');
+const upstream = program.command('upstream').description('管理出口节点');
 
 upstream
   .command('list')
-  .description('列出所有 upstream 及健康状态')
+  .description('列出所有出口节点及健康状态')
   .action(async () => {
     const status = await tryDashboard('/status');
     if (status && Array.isArray(status.upstreamHealth)) {
@@ -791,11 +798,11 @@ upstream
 upstream
   .command('add <name> <url>')
   .option('--weight <weight>', '设置权重', '1')
-  .description('添加 upstream')
+  .description('添加出口节点')
   .action(async (name, url, options) => {
     const normalizedName = String(name || '').trim();
     if (!normalizedName) {
-      throw new Error('upstream 名称不能为空。');
+      throw new Error('出口节点名称不能为空。');
     }
 
     const normalizedUrl = ensureValidUrl(url);
@@ -804,9 +811,9 @@ upstream
       throw new Error('权重必须是大于 0 的整数。');
     }
 
-    await mutateConfig(`已添加 upstream：${normalizedName}`, (config) => {
+    await mutateConfig(`已添加出口节点：${normalizedName}`, (config) => {
       if ((config.upstreams || []).some((item) => item.name === normalizedName)) {
-        throw new Error(`upstream ${normalizedName} 已存在。`);
+        throw new Error(`出口节点 ${normalizedName} 已存在。`);
       }
       config.upstreams = [
         ...(config.upstreams || []),
@@ -823,12 +830,12 @@ upstream
 
 upstream
   .command('remove <name>')
-  .description('删除 upstream')
+  .description('删除出口节点')
   .action(async (name) => {
-    await mutateConfig(`已删除 upstream：${name}`, (config) => {
+    await mutateConfig(`已删除出口节点：${name}`, (config) => {
       const exists = (config.upstreams || []).some((item) => item.name === name);
       if (!exists) {
-        throw new Error(`upstream ${name} 不存在。`);
+        throw new Error(`出口节点 ${name} 不存在。`);
       }
       config.upstreams = (config.upstreams || []).filter((item) => item.name !== name);
       return config;
@@ -837,12 +844,12 @@ upstream
 
 upstream
   .command('enable <name>')
-  .description('启用 upstream')
+  .description('启用出口节点')
   .action(async (name) => {
-    await mutateConfig(`已启用 upstream：${name}`, (config) => {
+    await mutateConfig(`已启用出口节点：${name}`, (config) => {
       const item = (config.upstreams || []).find((entry) => entry.name === name);
       if (!item) {
-        throw new Error(`upstream ${name} 不存在。`);
+        throw new Error(`出口节点 ${name} 不存在。`);
       }
       item.enabled = true;
       return config;
@@ -851,12 +858,12 @@ upstream
 
 upstream
   .command('disable <name>')
-  .description('禁用 upstream')
+  .description('禁用出口节点')
   .action(async (name) => {
-    await mutateConfig(`已禁用 upstream：${name}`, (config) => {
+    await mutateConfig(`已禁用出口节点：${name}`, (config) => {
       const item = (config.upstreams || []).find((entry) => entry.name === name);
       if (!item) {
-        throw new Error(`upstream ${name} 不存在。`);
+        throw new Error(`出口节点 ${name} 不存在。`);
       }
       item.enabled = false;
       return config;
@@ -865,17 +872,17 @@ upstream
 
 upstream
   .command('set-weight <name> <n>')
-  .description('设置 upstream 权重')
+  .description('设置出口节点权重')
   .action(async (name, n) => {
     const weight = Number.parseInt(n, 10);
     if (!Number.isFinite(weight) || weight <= 0) {
       throw new Error('权重必须是大于 0 的整数。');
     }
 
-    await mutateConfig(`已更新 upstream 权重：${name} -> ${weight}`, (config) => {
+    await mutateConfig(`已更新出口节点权重：${name} -> ${weight}`, (config) => {
       const item = (config.upstreams || []).find((entry) => entry.name === name);
       if (!item) {
-        throw new Error(`upstream ${name} 不存在。`);
+        throw new Error(`出口节点 ${name} 不存在。`);
       }
       item.weight = weight;
       return config;
@@ -954,6 +961,45 @@ program
     const limit = Math.max(Number.parseInt(options.n, 10) || 50, 1);
     const logs = await readRecentLogs(getRuntimeSettings().logsDir, limit);
     printJson(logs);
+  });
+
+const systemProxy = program.command('system-proxy').description('管理 macOS 系统代理接管');
+
+systemProxy
+  .command('status')
+  .description('查看系统代理接管状态')
+  .action(async () => {
+    const status = await getSystemProxyStatus(getRuntimeSettings());
+    console.log(formatSystemProxySummary(status));
+    console.log('');
+    printJson(status);
+  });
+
+systemProxy
+  .command('enable')
+  .description('让 macOS 系统代理指向 Roo 本地入口')
+  .action(async () => {
+    const status = await enableSystemProxy(getRuntimeSettings());
+    console.log('系统代理已切换到 Roo 本地入口。');
+    console.log(formatSystemProxySummary(status));
+  });
+
+systemProxy
+  .command('disable')
+  .description('关闭 Roo 对系统代理的接管')
+  .action(async () => {
+    const status = await disableSystemProxy(getRuntimeSettings());
+    console.log('系统代理接管已关闭。');
+    console.log(formatSystemProxySummary(status));
+  });
+
+systemProxy
+  .command('restore')
+  .description('恢复接管前保存的系统代理快照')
+  .action(async () => {
+    const status = await restoreSystemProxy(getRuntimeSettings());
+    console.log('系统代理已恢复到接管前状态。');
+    console.log(formatSystemProxySummary(status));
   });
 
 program

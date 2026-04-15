@@ -47,9 +47,16 @@ class UpstreamBalancer {
     const names = Array.isArray(options.names) && options.names.length
       ? new Set(options.names)
       : null;
+    const excludeNames = Array.isArray(options.excludeNames) && options.excludeNames.length
+      ? new Set(options.excludeNames)
+      : null;
 
     return items.filter((item) => {
       if (names && !names.has(item.name)) {
+        return false;
+      }
+
+      if (excludeNames && excludeNames.has(item.name)) {
         return false;
       }
 

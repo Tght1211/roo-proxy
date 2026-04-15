@@ -6,3 +6,6 @@ stats.json
 .DS_Store
 .pm2/
 release/
+.playwright-mcp/
+.claude/
+.github/

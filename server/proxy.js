@@ -13,6 +13,60 @@ function toErrorMessage(error) {
   return String(error.message || error);
 }
 
+function getRelayProxyFromEnv() {
+  return process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
+}
+
+function getRelayLoopConflict(localPort) {
+  const relayProxy = getRelayProxyFromEnv();
+  if (!relayProxy) {
+    return null;
+  }
+
+  if (!isRelayToSelf(relayProxy, localPort)) {
+    return null;
+  }
+
+  return {
+    proxyUrl: relayProxy,
+    localPort: Number(localPort),
+  };
+}
+
+function isLoopbackHost(hostname) {
+  const normalized = String(hostname || '').trim().toLowerCase();
+  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1' || normalized === '[::1]';
+}
+
+function getUrlPort(parsed) {
+  if (parsed.port) {
+    return Number(parsed.port);
+  }
+
+  if (parsed.protocol === 'https:') {
+    return 443;
+  }
+
+  if (parsed.protocol === 'http:') {
+    return 80;
+  }
+
+  return 1080;
+}
+
+function isRelayToSelf(viaUrl, localPort) {
+  if (!viaUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(viaUrl);
+    return isLoopbackHost(parsed.hostname) && getUrlPort(parsed) === Number(localPort);
+  } catch (error) {
+    return false;
+  }
+}
+
 function createProxyServer(options = {}) {
   const {
     port,
@@ -25,6 +79,8 @@ function createProxyServer(options = {}) {
   } = options;
 
   const requestMap = new Map();
+  const relayProbeCache = new Map();
+  const RELAY_PROBE_TTL_MS = 5_000;
 
   const finalizeRequest = async (connectionId, status, extra = {}) => {
     const requestInfo = requestMap.get(connectionId);
@@ -57,11 +113,11 @@ function createProxyServer(options = {}) {
     requestMap.delete(connectionId);
   };
 
-  const recordImmediateFailure = async ({ hostname, rule, error }) => {
+  const recordImmediateFailure = async ({ hostname, rule, error, upstreamName = null }) => {
     const payload = {
       hostname,
       rule,
-      upstream: null,
+      upstream: upstreamName,
       status: 'failed',
       durationMs: 0,
       isDirect: false,
@@ -72,6 +128,61 @@ function createProxyServer(options = {}) {
     await logger.access(payload);
   };
 
+  const resolveUpstreamProxyUrl = async ({ upstream, localPort }) => {
+    if (!upstream) {
+      return { proxyUrl: null, relayVia: null };
+    }
+
+    const explicitVia = upstream.via ? String(upstream.via).trim() : null;
+    const envRelayProxy = getRelayProxyFromEnv();
+    const relayVia = explicitVia || envRelayProxy;
+
+    if (!relayVia) {
+      return { proxyUrl: upstream.url, relayVia: null };
+    }
+
+    if (isRelayToSelf(relayVia, localPort)) {
+      throw new Error('前置代理指向 Roo 自身监听端口，已阻止循环链路');
+    }
+
+    const proxyUrl = await chainManager.getChainUrl(relayVia, upstream.url);
+    return { proxyUrl, relayVia };
+  };
+
+  const ensureRelayHealthy = async ({ upstream, relayVia }) => {
+    if (!relayVia || !chainManager || typeof chainManager.probeUpstream !== 'function') {
+      return;
+    }
+
+    const cacheKey = `${relayVia}||${upstream.url}`;
+    const now = Date.now();
+    const cached = relayProbeCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+      if (cached.error) {
+        throw cached.error;
+      }
+      return;
+    }
+
+    try {
+      await chainManager.probeUpstream(relayVia, upstream.url);
+      relayProbeCache.set(cacheKey, {
+        expiresAt: now + RELAY_PROBE_TTL_MS,
+        error: null,
+      });
+    } catch (error) {
+      const wrappedError = error instanceof Error
+        ? error
+        : new Error(String(error || '前置代理探测失败'));
+      relayProbeCache.set(cacheKey, {
+        expiresAt: now + RELAY_PROBE_TTL_MS,
+        error: wrappedError,
+      });
+      throw wrappedError;
+    }
+  };
+
   const server = new ProxyChain.Server({
     port,
     host,
@@ -80,46 +191,86 @@ function createProxyServer(options = {}) {
       const config = configManager.getConfig();
       const route = await resolveRoute(hostname, config);
       const rule = route.rule ? formatRuleLabel(route.rule) : null;
-      const upstream = route.action === 'proxy'
-        ? balancer.pickUpstream({ names: route.upstreams })
-        : null;
+      const attemptedUpstreams = new Set();
+      const localPort = configManager.settings && configManager.settings.localPort
+        ? configManager.settings.localPort
+        : port;
 
-      if (route.action === 'proxy' && !upstream) {
-        const scopedMessage = route.upstreams.length
-          ? `当前没有可用的上游代理，请检查这些 upstream：${route.upstreams.join(', ')}`
-          : '当前没有可用的上游代理，请检查 upstream 健康状态。';
-        await recordImmediateFailure({
-          hostname,
-          rule,
-          error: scopedMessage,
-        });
-        throw new ProxyChain.RequestError(scopedMessage, 502);
-      }
-
-      requestMap.set(connectionId, {
-        connectionId,
-        hostname,
-        rule,
-        upstreamName: upstream ? upstream.name : null,
-        startedAt: Date.now(),
-        isDirect: route.action === 'direct',
-        completed: false,
-      });
-
-      let upstreamProxyUrl = upstream ? upstream.url : null;
-      if (upstream && upstream.via) {
-        upstreamProxyUrl = await chainManager.getChainUrl(upstream.via, upstream.url);
-      }
-
-      return {
-        upstreamProxyUrl,
-        customTag: {
+      if (route.action !== 'proxy') {
+        requestMap.set(connectionId, {
           connectionId,
           hostname,
           rule,
-          upstreamName: upstream ? upstream.name : null,
-        },
-      };
+          upstreamName: null,
+          startedAt: Date.now(),
+          isDirect: true,
+          completed: false,
+        });
+
+        return {
+          upstreamProxyUrl: null,
+          customTag: {
+            connectionId,
+            hostname,
+            rule,
+            upstreamName: null,
+          },
+        };
+      }
+
+      while (true) {
+        const upstream = balancer.pickUpstream({
+          names: route.upstreams,
+          excludeNames: [...attemptedUpstreams],
+        });
+
+        if (!upstream) {
+          const scopedMessage = route.upstreams.length
+            ? `当前没有可用的上游代理，请检查这些 upstream：${route.upstreams.join(', ')}`
+            : '当前没有可用的上游代理，请检查 upstream 健康状态。';
+          await recordImmediateFailure({
+            hostname,
+            rule,
+            error: scopedMessage,
+          });
+          throw new ProxyChain.RequestError(scopedMessage, 502);
+        }
+
+        attemptedUpstreams.add(upstream.name);
+
+        try {
+          const { proxyUrl, relayVia } = await resolveUpstreamProxyUrl({ upstream, localPort });
+          await ensureRelayHealthy({ upstream, relayVia });
+
+          requestMap.set(connectionId, {
+            connectionId,
+            hostname,
+            rule,
+            upstreamName: upstream.name,
+            startedAt: Date.now(),
+            isDirect: false,
+            completed: false,
+          });
+
+          return {
+            upstreamProxyUrl: proxyUrl,
+            customTag: {
+              connectionId,
+              hostname,
+              rule,
+              upstreamName: upstream.name,
+            },
+          };
+        } catch (error) {
+          balancer.markFailure(upstream.name, error);
+          await logger.error('上游链路初始化失败，已尝试切流', {
+            hostname,
+            rule,
+            upstream: upstream.name,
+            error: toErrorMessage(error),
+          });
+        }
+      }
     },
   });
 
@@ -162,4 +313,10 @@ function createProxyServer(options = {}) {
 
 module.exports = {
   createProxyServer,
+  getRelayProxyFromEnv,
+  getRelayLoopConflict,
+  isLoopbackHost,
+  getUrlPort,
+  isRelayToSelf,
 };
+

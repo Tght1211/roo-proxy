@@ -6,8 +6,45 @@ const net = require('net');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { getSettings, loadEnv, readActiveConfig, readConfigCache } = require('../server/config');
+const { ChainProxyManager } = require('../server/chain');
 
 const execFileAsync = promisify(execFile);
+
+async function fetchIpByCurl(args) {
+  const { stdout } = await execFileAsync('curl', args, { timeout: 10_000, maxBuffer: 1024 * 64 });
+  return stdout.trim() || null;
+}
+
+function getEnvProxyUrl() {
+  return process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
+}
+
+async function resolveProbeProxyUrl(upstream, envProxy, chainManager) {
+  if (upstream.via) {
+    if (!chainManager) {
+      throw new Error('via 链路初始化失败');
+    }
+    return {
+      probeMode: 'via-chain',
+      probeProxyUrl: await chainManager.getChainUrl(upstream.via, upstream.url),
+    };
+  }
+
+  if (envProxy) {
+    if (!chainManager) {
+      throw new Error('环境代理链路初始化失败');
+    }
+    return {
+      probeMode: 'env-proxy',
+      probeProxyUrl: await chainManager.getChainUrl(envProxy, upstream.url),
+    };
+  }
+
+  return {
+    probeMode: 'direct',
+    probeProxyUrl: upstream.url,
+  };
+}
 
 function ok(name, detail, suggestion = '') {
   return { name, status: 'ok', detail, suggestion };
@@ -178,17 +215,33 @@ async function checkRandomUpstream(settings) {
   }
 
   const selected = enabled[Math.floor(Math.random() * enabled.length)];
+  let chainManager = null;
+
   try {
-    const parsed = new URL(selected.url);
-    const port = Number(parsed.port)
-      || (parsed.protocol === 'https:' ? 443 : parsed.protocol === 'http:' ? 80 : 1080);
-    const result = await probeTcp(parsed.hostname, port, 4000);
-    if (result.success) {
-      return ok('upstream 连通性', `随机检测 ${selected.name} 成功，可连接到 ${parsed.hostname}:${port}`);
+    chainManager = new ChainProxyManager();
+    const envProxy = getEnvProxyUrl();
+    const { probeMode, probeProxyUrl } = await resolveProbeProxyUrl(selected, envProxy, chainManager);
+    const ip = await fetchIpByCurl(['-sS', '--max-time', '8', '--proxy', probeProxyUrl, 'https://api.ip.sb/ip']);
+
+    if (!ip) {
+      throw new Error('返回为空');
     }
-    return warn('upstream 连通性', `随机检测 ${selected.name} 失败：${result.error.message}`, '请检查 upstream 地址、端口、用户名密码和网络连通性。');
+
+    if (probeMode === 'via-chain') {
+      return ok('upstream 连通性', `随机检测 ${selected.name} 成功（via 链路），出口 IP：${ip}`);
+    }
+
+    if (probeMode === 'env-proxy') {
+      return ok('upstream 连通性', `随机检测 ${selected.name} 成功（环境代理链路），出口 IP：${ip}`);
+    }
+
+    return ok('upstream 连通性', `随机检测 ${selected.name} 成功（直连），出口 IP：${ip}`);
   } catch (error) {
-    return fail('upstream 连通性', `upstream ${selected.name} 配置无效：${error.message}`, '请使用 roo upstream list / roo show 检查配置格式。');
+    return warn('upstream 连通性', `随机检测 ${selected.name} 失败：${error.message}`, '请检查 upstream 地址、端口、用户名密码，以及 via/环境代理链路是否可用。');
+  } finally {
+    if (chainManager) {
+      await chainManager.stopAll().catch(() => {});
+    }
   }
 }
 

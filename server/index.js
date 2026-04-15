@@ -2,9 +2,10 @@ const { ConfigManager, getSettings, loadEnv, isRemoteConfigEnabled } = require('
 const { Logger } = require('./logger');
 const { StatsManager } = require('./stats');
 const { UpstreamBalancer } = require('./balancer');
-const { createProxyServer } = require('./proxy');
+const { createProxyServer, getRelayLoopConflict } = require('./proxy');
 const { ChainProxyManager } = require('./chain');
 const { createDashboard } = require('../dashboard');
+const { getSystemProxyStatus } = require('./system-proxy');
 
 function maskSensitiveUrl(rawUrl) {
   if (!rawUrl) {
@@ -25,6 +26,7 @@ function maskSensitiveUrl(rawUrl) {
   }
 }
 
+
 function sanitizeConfigForStatus(config) {
   const nextConfig = config && typeof config === 'object'
     ? JSON.parse(JSON.stringify(config))
@@ -39,6 +41,17 @@ function sanitizeConfigForStatus(config) {
     : [];
 
   return nextConfig;
+}
+
+function ensureNoRelayLoop(settings) {
+  const conflict = getRelayLoopConflict(settings.localPort);
+  if (!conflict) {
+    return;
+  }
+
+  const port = conflict.localPort || settings.localPort;
+  const proxyUrl = conflict.proxyUrl;
+  throw new Error(`检测到前置代理端口冲突：LOCAL_PORT=${port} 与环境代理 ${proxyUrl} 指向同一监听端口。请修改 LOCAL_PORT 或 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY，避免自循环代理。`);
 }
 
 async function detectRunningRoo(settings) {
@@ -62,6 +75,7 @@ async function detectRunningRoo(settings) {
 async function bootstrap() {
   loadEnv();
   const settings = getSettings();
+  ensureNoRelayLoop(settings);
 
   const logger = new Logger({
     logsDir: settings.logsDir,
@@ -139,6 +153,9 @@ async function bootstrap() {
       config: sanitizeConfigForStatus(configManager.getConfig()),
       upstreamHealth: balancer.getSnapshot(),
       statsSummary: stats.getStats(),
+      systemProxy: {
+        supported: process.platform === 'darwin',
+      },
       env: {
         logLevel: settings.logLevel,
         logRetainDays: settings.logRetainDays,

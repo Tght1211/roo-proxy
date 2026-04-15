@@ -5,6 +5,12 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { readRecentLogs } = require('../server/logger');
 const { updateActiveConfig } = require('../server/config');
+const {
+  disableSystemProxy,
+  enableSystemProxy,
+  getSystemProxyStatus,
+  restoreSystemProxy,
+} = require('../server/system-proxy');
 
 const execFileAsync = promisify(execFile);
 
@@ -170,21 +176,57 @@ function formatProbeError(error) {
   return String(error.message || error);
 }
 
-async function probeUpstreamConnectivity(upstream, chainManager) {
+function formatUpstreamFailureHint(check) {
+  const detail = check?.error || '连接失败';
+  if (!check) {
+    return `请检查出口节点地址、账号密码、协议和链式代理配置。详情：${detail}`;
+  }
+
+  if (check.probeMode === 'via-chain') {
+    return `${check.name} 依赖前置跳板链路，请检查前置跳板与出口节点的联合链路。详情：${detail}`;
+  }
+
+  if (check.probeMode === 'env-proxy') {
+    return `${check.name} 当前需依赖 Roo 前置链路访问，请检查环境代理与出口节点联合链路。详情：${detail}`;
+  }
+
+  return `${check.name} 当前直连探测失败；如果该出口节点需要前置链路，请检查环境代理设置。详情：${detail}`;
+}
+
+async function probeUpstreamConnectivity(upstream, chainManager, envProxy) {
   let probeProxyUrl = upstream.url;
+  let probeMode = 'direct';
 
   if (upstream.via && chainManager && typeof chainManager.getChainUrl === 'function') {
     try {
       probeProxyUrl = await chainManager.getChainUrl(upstream.via, upstream.url);
+      probeMode = 'via-chain';
     } catch (error) {
       return {
         name: upstream.name,
         healthy: upstream.healthy !== false,
         viaEnabled: true,
+        probeMode: 'via-chain',
         ok: false,
         ip: null,
         meta: null,
         error: `via 链路不可用：${formatProbeError(error)}`,
+      };
+    }
+  } else if (envProxy && chainManager && typeof chainManager.getChainUrl === 'function') {
+    try {
+      probeProxyUrl = await chainManager.getChainUrl(envProxy, upstream.url);
+      probeMode = 'env-proxy';
+    } catch (error) {
+      return {
+        name: upstream.name,
+        healthy: upstream.healthy !== false,
+        viaEnabled: false,
+        probeMode: 'env-proxy',
+        ok: false,
+        ip: null,
+        meta: null,
+        error: `环境代理链路探测失败：${formatProbeError(error)}`,
       };
     }
   }
@@ -200,20 +242,27 @@ async function probeUpstreamConnectivity(upstream, chainManager) {
       name: upstream.name,
       healthy: upstream.healthy !== false,
       viaEnabled: Boolean(upstream.via),
+      probeMode,
       ok: true,
       ip,
       meta,
       error: null,
     };
   } catch (error) {
+    const prefix = probeMode === 'via-chain'
+      ? 'via 链路探测失败：'
+      : probeMode === 'env-proxy'
+        ? '环境代理链路探测失败：'
+        : '出口节点直连探测失败：';
     return {
       name: upstream.name,
       healthy: upstream.healthy !== false,
       viaEnabled: Boolean(upstream.via),
+      probeMode,
       ok: false,
       ip: null,
       meta: null,
-      error: formatProbeError(error),
+      error: prefix + formatProbeError(error),
     };
   }
 }
@@ -235,7 +284,7 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
     ? balancer.getEnabledUpstreams()
     : [];
   const checkTargets = enabledUpstreams.slice(0, 6);
-  const upstreamChecks = await Promise.all(checkTargets.map((upstream) => probeUpstreamConnectivity(upstream, chainManager)));
+  const upstreamChecks = await Promise.all(checkTargets.map((upstream) => probeUpstreamConnectivity(upstream, chainManager, envProxy)));
   const upstreamCheckMap = new Map(upstreamChecks.map((item) => [item.name, item]));
   const upstreamCheckSummary = {
     totalEnabled: enabledUpstreams.length,
@@ -281,12 +330,9 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
   let routeHint;
   if (upstreamCheckSummary.failed > 0) {
     const firstFailed = upstreamChecks.find((item) => !item.ok);
-    const failureHint = firstFailed
-      ? `${firstFailed.name}：${firstFailed.error || '连接失败'}`
-      : '请检查上游地址、账号密码、协议和 via 配置';
-    routeHint = `检测到 ${upstreamCheckSummary.failed} 个上游连通异常，建议先修复上游。示例：${failureHint}`;
+    routeHint = `检测到 ${upstreamCheckSummary.failed} 个出口节点探测失败。${formatUpstreamFailureHint(firstFailed)}`;
   } else if (rooProbeMode === 'upstream-probe') {
-    routeHint = `经 Roo 出口优先展示上游探测结果（upstream: ${rooProbeUpstream}）。若与按规则结果不一致，请检查该测试域名是否命中代理规则。`;
+    routeHint = `经 Roo 出口优先展示出口节点探测结果（节点: ${rooProbeUpstream}）。若与按规则结果不一致，请检查该测试域名是否命中代理规则。`;
   } else if (envProxy) {
     routeHint = '当前 Roo 进程存在环境代理；如果系统还有 TUN/VPN，则“本机直连出口”反映的是系统默认路由出口。';
   } else {
@@ -516,6 +562,50 @@ function renderHtml() {
     .kv dt{color:var(--text-3);font-weight:500}
     .kv dd{color:var(--text);text-align:right;font-variant-numeric:tabular-nums;font-family:'SFMono-Regular',Consolas,monospace;font-size:12.5px}
 
+    /* ---- Overview summary ---- */
+    .summary-shell{background:linear-gradient(180deg,#ffffff 0%,#f8fbff 100%);border:1px solid var(--border-soft);border-radius:18px;padding:22px 24px;box-shadow:var(--shadow);margin-bottom:16px}
+    .summary-shell.danger{background:linear-gradient(180deg,#fff8f8 0%,#fff1f2 100%);border-color:#fecaca}
+    .summary-shell.warning{background:linear-gradient(180deg,#fffdf5 0%,#fffbeb 100%);border-color:#fde68a}
+    .summary-shell.success{background:linear-gradient(180deg,#fbfffd 0%,#f0fdf4 100%);border-color:#bbf7d0}
+    .summary-shell.neutral{background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%)}
+    .summary-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .summary-eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+    .summary-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:12px;font-weight:600}
+    .summary-badge.success{background:var(--green-soft);color:#065f46}
+    .summary-badge.warning{background:var(--amber-soft);color:#92400e}
+    .summary-badge.danger{background:var(--red-soft);color:#991b1b}
+    .summary-badge.neutral{background:var(--border-soft);color:var(--text-2)}
+    .summary-badge-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.9}
+    .summary-title{font-size:24px;line-height:1.15;font-weight:700;letter-spacing:-.03em;color:var(--text)}
+    .summary-desc{font-size:13px;color:var(--text-2);margin-top:8px;line-height:1.7;max-width:760px}
+    .summary-meta{font-size:12px;color:var(--text-3);margin-top:10px}
+    .summary-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+    .summary-action{display:inline-flex;align-items:center;padding:7px 11px;border-radius:999px;background:rgba(255,255,255,.88);border:1px solid var(--border-soft);font-size:12px;color:var(--text-2)}
+
+    /* ---- Diagnostic panels ---- */
+    .section-stack{display:grid;gap:16px}
+    .diag-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}
+    .diag-panel{border:1px solid var(--border-soft);border-radius:16px;background:#fff;padding:16px 18px}
+    .diag-panel-muted{background:#fbfcfe}
+    .diag-title{font-size:12px;color:var(--text-3);margin-bottom:10px;font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+    .diag-list{display:grid;gap:10px}
+    .diag-block{border:1px solid var(--border-soft);border-radius:12px;padding:12px 14px;background:#fff}
+    .diag-block.bad{border-color:#fecaca;background:#fff7f7}
+    .diag-caption{font-size:12px;color:var(--text-3);margin-bottom:4px}
+    .diag-text{font-size:13px;color:var(--text);line-height:1.7;word-break:break-all}
+    .diag-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+    .diag-stat{border:1px solid var(--border-soft);border-radius:12px;padding:10px 12px;background:#fff}
+    .diag-stat-label{font-size:11px;color:var(--text-3);margin-bottom:6px}
+    .diag-stat-value{font-size:20px;font-weight:700;letter-spacing:-.02em;color:var(--text)}
+    .diag-note{border:1px solid var(--border-soft);border-radius:12px;padding:12px 14px;background:#fff;font-size:13px;color:var(--text-2);line-height:1.7}
+    .diag-note-success{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+    .diag-note-warning{border-color:#fde68a;background:#fffbeb;color:#92400e}
+    .diag-note-danger{border-color:#fecaca;background:#fff1f2;color:#991b1b}
+    .diag-kv{display:grid;grid-template-columns:110px 1fr;gap:8px 12px}
+    .diag-kv-key{font-size:12px;color:var(--text-3)}
+    .diag-kv-val{font-size:12.5px;color:var(--text);word-break:break-all}
+    .card-subtitle{font-size:12px;color:var(--text-3);margin:-4px 0 14px}
+
     /* ---- Misc ---- */
     .url-text{font-size:12px;font-family:'SFMono-Regular',Consolas,monospace;color:var(--text-2);
       max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -524,7 +614,7 @@ function renderHtml() {
     code{font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;background:var(--border-soft);
       padding:2px 6px;border-radius:4px;color:var(--text)}
 
-    @media (max-width:1100px){.stat-grid{grid-template-columns:repeat(2,1fr)}.grid-2{grid-template-columns:1fr}}
+    @media (max-width:1100px){.stat-grid{grid-template-columns:repeat(2,1fr)}.grid-2{grid-template-columns:1fr}.diag-grid{grid-template-columns:1fr}.diag-stats{grid-template-columns:repeat(2,1fr)}.summary-head{flex-direction:column}.summary-title{font-size:21px}}
   </style>
 </head>
 <body>
@@ -543,7 +633,7 @@ function renderHtml() {
       </div>
       <div class="nav-item" data-page="config">
         <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        配置管理
+        链式编排
       </div>
       <div class="nav-item" data-page="logs">
         <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
@@ -560,7 +650,7 @@ function renderHtml() {
     <div class="topbar">
       <div>
         <div class="page-title" id="pageTitle">概览</div>
-        <div class="page-sub" id="pageSub">实时监控代理服务状态和流量</div>
+        <div class="page-sub" id="pageSub">实时查看链式代理编排状态与出口流量</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" id="reloadRulesBtn">
@@ -584,19 +674,19 @@ function renderHtml() {
           </div>
           <div class="stat">
             <div class="stat-h">
+              <div class="stat-label">出口节点健康</div>
+              <div class="stat-ico ico-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+            </div>
+            <div class="stat-v" id="ovUpstream">-</div>
+            <div class="stat-tip" id="ovUpstreamHint">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-h">
               <div class="stat-label">今日请求</div>
               <div class="stat-ico ico-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
             </div>
             <div class="stat-v" id="ovToday">-</div>
             <div class="stat-tip" id="ovTotal">-</div>
-          </div>
-          <div class="stat">
-            <div class="stat-h">
-              <div class="stat-label">上游代理</div>
-              <div class="stat-ico ico-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-            </div>
-            <div class="stat-v" id="ovUpstream">-</div>
-            <div class="stat-tip" id="ovUpstreamHint">-</div>
           </div>
           <div class="stat">
             <div class="stat-h">
@@ -608,9 +698,28 @@ function renderHtml() {
           </div>
         </div>
 
+        <div class="summary-shell neutral" id="ovRunSummary">
+          <div class="summary-head">
+            <div>
+              <div class="summary-eyebrow">
+                <span class="summary-badge neutral" id="ovSummaryBadge"><span class="summary-badge-dot"></span>待检查</span>
+                <span class="summary-meta" id="ovSummaryMeta">加载中</span>
+              </div>
+              <div class="summary-title" id="ovSummaryTitle">正在刷新概览状态</div>
+              <div class="summary-desc" id="ovSummaryDesc">仅展示关键状态与异常提示。</div>
+              <div class="summary-actions" id="ovSummaryActions"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><div class="card-title"><span class="dot"></span>网络状态</div></div>
+          <div id="ovNetDiag"></div>
+        </div>
+
         <div class="grid-2">
           <div class="card">
-            <div class="card-h"><div class="card-title"><span class="dot"></span>上游健康状态</div></div>
+            <div class="card-h"><div class="card-title"><span class="dot"></span>出口节点健康状态</div></div>
             <div id="ovHealthWrap"><div class="empty-tip">加载中...</div></div>
           </div>
 
@@ -620,21 +729,27 @@ function renderHtml() {
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>网络诊断（当前生效路径）</div></div>
-          <dl class="kv" id="ovNetDiag"></dl>
-        </div>
-
       </div>
 
       <!-- Config -->
       <div class="page" id="page-config">
         <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>全局设置</div></div>
+          <div class="card-h"><div class="card-title"><span class="dot"></span>系统配置工具</div></div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">作用范围：完整系统运行配置（balance_strategy / default_route / upstreams / rules），不是仅“全局设置”字段。</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+            <input type="file" id="configImportInput" accept="application/json,.json" style="display:none" />
+            <button class="btn btn-ghost" id="importConfigBtn">导入系统配置</button>
+            <button class="btn btn-ghost" id="exportConfigBtn">导出系统配置</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><div class="card-title"><span class="dot"></span>链式代理编排</div></div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">配置 Roo 如何作为链式代理编排器工作：未命中规则时默认如何处理，命中规则时如何分流到出口节点。</div>
           <div class="srow">
             <div>
               <div class="skey">负载均衡策略</div>
-              <div class="sdesc">多个上游时的流量分配方式</div>
+              <div class="sdesc">多个出口节点时的流量分配方式</div>
             </div>
             <select class="form-control" id="cfgStrategy" style="width:200px">
               <option value="round-robin">轮询 (round-robin)</option>
@@ -655,38 +770,57 @@ function renderHtml() {
         </div>
 
         <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>Roo 环境代理</div></div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">可配置 Roo 进程使用的环境代理。若系统走 TUN/VPN，这里可能为空，但“本机直连出口”仍会体现系统路由。</div>
+          <div class="card-h"><div class="card-title"><span class="dot"></span>系统代理接管（macOS）</div></div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">可将 macOS 系统代理直接指向 Roo 本地入口，避免手动在多个程序里重复配置代理端口。</div>
+          <div class="srow">
+            <div>
+              <div class="skey">当前接入方式</div>
+              <div class="sdesc" id="sysProxySummary">正在读取系统代理状态...</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+              <button class="btn btn-ghost" id="refreshSystemProxyBtn">刷新状态</button>
+              <button class="btn btn-ghost" id="restoreSystemProxyBtn">恢复系统代理</button>
+              <button class="btn btn-danger" id="disableSystemProxyBtn">关闭接管</button>
+              <button class="btn btn-primary" id="enableSystemProxyBtn">开启接管</button>
+            </div>
+          </div>
+          <div id="sysProxyDetail" style="font-size:12px;color:var(--text-3);line-height:1.8"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><div class="card-title"><span class="dot"></span>Roo 前置跳板（环境代理）</div></div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">推荐在这里填写你现有的本地代理端口。所有出口节点默认都会先经过这里，再走住宅 IP / 落地机出口；如果前置链路故障，Roo 会自动切到其他可用出口。</div>
           <div class="form-group"><label class="form-label">HTTP_PROXY</label><input class="form-control" id="envHttpProxy" placeholder="如: http://127.0.0.1:6578" /></div>
           <div class="form-group"><label class="form-label">HTTPS_PROXY</label><input class="form-control" id="envHttpsProxy" placeholder="如: http://127.0.0.1:6578" /></div>
           <div class="form-group"><label class="form-label">ALL_PROXY</label><input class="form-control" id="envAllProxy" placeholder="如: socks5://127.0.0.1:6578" /></div>
           <div class="form-group"><label class="form-label">NO_PROXY</label><input class="form-control" id="envNoProxy" placeholder="如: 127.0.0.1,localhost,.local" /></div>
           <div style="display:flex;gap:8px;justify-content:flex-end">
-            <button class="btn btn-ghost" id="resetEnvBtn">重置环境代理</button>
-            <button class="btn btn-primary" id="applyEnvBtn">保存环境代理</button>
+            <button class="btn btn-ghost" id="resetEnvBtn">重置前置跳板</button>
+            <button class="btn btn-primary" id="applyEnvBtn">保存前置跳板</button>
           </div>
         </div>
 
         <div class="card">
           <div class="sec-h">
-            <div class="sec-t"><span class="dot"></span>上游代理</div>
-            <button class="btn btn-primary btn-sm" id="addUpstreamBtn">+ 添加上游</button>
+            <div class="sec-t"><span class="dot"></span>出口节点池（落地机）</div>
+            <button class="btn btn-primary btn-sm" id="addUpstreamBtn">+ 添加出口节点</button>
           </div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">出口节点是最终对外出站的住宅 IP / 落地机。默认会复用上面的全局前置跳板；只有少数高级场景才需要给单个出口单独指定 via。</div>
           <table id="upstreamTable" style="display:none">
-            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>入口代理(via)</th><th>权重</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>单独 via</th><th>权重</th><th>状态</th><th>操作</th></tr></thead>
             <tbody id="upstreamBody"></tbody>
           </table>
-          <div class="empty-tip" id="upstreamEmpty">暂无上游代理，点击「添加」新建</div>
+          <div class="empty-tip" id="upstreamEmpty">暂无出口节点，点击「添加」新建</div>
         </div>
 
         <div class="card">
           <div class="sec-h">
-            <div class="sec-t"><span class="dot"></span>路由规则</div>
+            <div class="sec-t"><span class="dot"></span>分流规则</div>
             <button class="btn btn-primary btn-sm" id="addRuleBtn">+ 添加规则</button>
           </div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">说明：规则按“匹配优先级”自动生效，不按列表顺序逐条命中。</div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">规则决定流量是直连，还是进入某个出口节点池；匹配优先级高的规则会优先生效。</div>
           <table id="rulesTable" style="display:none">
-            <thead><tr><th style="width:40px">#</th><th>类型</th><th>匹配值</th><th>动作</th><th>上游</th><th>操作</th></tr></thead>
+            <thead><tr><th style="width:40px">#</th><th>类型</th><th>匹配值</th><th>动作</th><th>出口节点</th><th>操作</th></tr></thead>
             <tbody id="rulesBody"></tbody>
           </table>
           <div class="empty-tip" id="rulesEmpty">暂无规则，点击「添加」新建</div>
@@ -719,10 +853,14 @@ function renderHtml() {
   <!-- Upstream Modal -->
   <div class="modal-overlay" id="upstreamModal">
     <div class="modal">
-      <div class="modal-title" id="upstreamModalTitle">添加上游代理</div>
+      <div class="modal-title" id="upstreamModalTitle">添加出口节点</div>
       <div class="form-group"><label class="form-label">名称 *</label><input class="form-control" id="upName" placeholder="如: residential-01" /></div>
       <div class="form-group"><label class="form-label">代理 URL *</label><input class="form-control" id="upUrl" placeholder="socks5://user:pass@host:port" /></div>
-      <div class="form-group"><label class="form-label">入口代理 via（可选）</label><input class="form-control" id="upVia" placeholder="如: socks5://entry-user:pass@host:port 或 http://host:port" /></div>
+      <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">默认会复用上面配置的全局前置跳板。只有这个出口节点需要单独前置链路时，才展开填写高级 via。</div>
+      <div class="form-group" style="margin-bottom:8px">
+        <button type="button" class="btn btn-ghost btn-sm" id="toggleUpViaBtn">高级设置：单独 via</button>
+      </div>
+      <div class="form-group" id="upViaGroup" style="display:none"><label class="form-label">单独 via（可选）</label><input class="form-control" id="upVia" placeholder="如: socks5://entry-user:pass@host:port 或 http://host:port" /></div>
       <div class="form-group"><label class="form-label">权重</label><input class="form-control" id="upWeight" type="number" value="1" min="1" /></div>
       <div class="form-group" style="display:flex;align-items:center;gap:12px">
         <label class="form-label" style="margin:0">启用</label>
@@ -738,7 +876,7 @@ function renderHtml() {
   <!-- Rule Modal -->
   <div class="modal-overlay" id="ruleModal">
     <div class="modal">
-      <div class="modal-title" id="ruleModalTitle">添加路由规则</div>
+      <div class="modal-title" id="ruleModalTitle">添加分流规则</div>
       <div class="form-group"><label class="form-label">规则类型</label>
         <select class="form-control" id="ruleType">
           <option value="domain-suffix">域名后缀 (domain-suffix)</option>
@@ -758,7 +896,7 @@ function renderHtml() {
         </select>
       </div>
       <div class="form-group" id="ruleUpstreamsGroup">
-        <label class="form-label">上游代理</label>
+        <label class="form-label">出口节点</label>
         <div id="ruleUpstreamCheckboxes"></div>
       </div>
       <div class="modal-footer">
@@ -769,13 +907,16 @@ function renderHtml() {
   </div>
 
 <script>
-let cfg = null, originalCfg = null, lastStatus = null, envSettings = null;
+let cfg = null, originalCfg = null, lastStatus = null, envSettings = null, systemProxyStatus = null;
 let editUpIdx = -1;
+let overviewRefreshToken = 0;
+let lastNetDiagRenderKey = null;
+let upViaExpanded = false;
 
 const pageTitles = {
-  overview: { title: '概览', sub: '实时监控代理服务状态和流量' },
-  config: { title: '配置管理', sub: '管理上游代理和路由规则' },
-  logs: { title: '访问日志', sub: '查看最近的请求日志' }
+  overview: { title: '概览', sub: '实时查看链式代理编排状态与出口流量' },
+  config: { title: '链式代理编排', sub: '管理系统代理接管、前置跳板、出口节点与分流规则' },
+  logs: { title: '访问日志', sub: '查看最近的请求日志与实际出口结果' }
 };
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -814,6 +955,32 @@ function maskUrl(url) {
   try { const u = new URL(url); if (u.password) u.password = '****'; return u.toString(); } catch { return url; }
 }
 
+function formatConfigExportName() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return 'roo-config-'
+    + d.getFullYear()
+    + pad(d.getMonth() + 1)
+    + pad(d.getDate())
+    + '-'
+    + pad(d.getHours())
+    + pad(d.getMinutes())
+    + pad(d.getSeconds())
+    + '.json';
+}
+
+function downloadConfig(config) {
+  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = formatConfigExportName();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function formatDuration(seconds) {
   if (!seconds || seconds < 0) return '-';
   const d = Math.floor(seconds / 86400), h = Math.floor((seconds % 86400) / 3600);
@@ -846,99 +1013,126 @@ function getDiagValue(meta, fallback, emptyText = '获取失败') {
   return emptyText;
 }
 
-function renderNetDiag(netDiag) {
-  const egressCandidates = [
-    { label: '本机默认出口', value: getDiagValue(netDiag.directMeta, netDiag.directIp), key: netDiag.directMeta?.ip || netDiag.directIp || 'direct' },
-    ...(netDiag.envProxy ? [{ label: '环境代理出口', value: getDiagValue(netDiag.envProxyMeta, netDiag.envProxyIp, '未启用'), key: netDiag.envProxyMeta?.ip || netDiag.envProxyIp || 'env' }] : []),
-    { label: netDiag.rooProbeUpstream ? ('当前上游出口（' + netDiag.rooProbeUpstream + '）') : '经 Roo 出口', value: getDiagValue(netDiag.rooProxyMeta, netDiag.rooProxyIp), key: netDiag.rooProxyMeta?.ip || netDiag.rooProxyIp || 'roo' },
-  ];
-
-  const mergedEgress = [];
-  egressCandidates.forEach((item) => {
-    const existing = mergedEgress.find((entry) => entry.key === item.key && entry.value === item.value);
-    if (existing) {
-      existing.labels.push(item.label);
-    } else {
-      mergedEgress.push({ key: item.key, value: item.value, labels: [item.label] });
-    }
-  });
-
-  const envItems = [
-    netDiag.allProxy ? ['ALL_PROXY', netDiag.allProxy] : null,
-    netDiag.httpProxy ? ['HTTP_PROXY', netDiag.httpProxy] : null,
-    netDiag.httpsProxy ? ['HTTPS_PROXY', netDiag.httpsProxy] : null,
-    netDiag.noProxy ? ['NO_PROXY', netDiag.noProxy] : null,
-  ].filter(Boolean);
-
-  const checks = Array.isArray(netDiag.upstreamChecks) ? netDiag.upstreamChecks : [];
+function buildNetDiagSummary(netDiag = {}) {
   const summary = netDiag.upstreamCheckSummary || { totalEnabled: 0, checked: 0, ok: 0, failed: 0, skipped: 0 };
-  const hasFailedChecks = summary.failed > 0;
+  const failedChecks = Array.isArray(netDiag.upstreamChecks)
+    ? netDiag.upstreamChecks.filter((item) => !item.ok)
+    : [];
+
+  if (summary.failed > 0) {
+    const failedNames = failedChecks.slice(0, 2).map((item) => item.name).filter(Boolean);
+    return {
+      tone: 'danger',
+      badge: '异常',
+      title: '出口节点存在异常',
+      desc: '已检查 ' + esc(String(summary.checked || 0)) + ' 个出口，失败 ' + esc(String(summary.failed || 0)) + ' 个。',
+      meta: failedNames.length ? ('异常节点：' + esc(failedNames.join('、'))) : '请优先处理失败节点。',
+      actions: ['检查失败节点', netDiag.envProxy ? '检查前置代理' : '检查出口配置'],
+    };
+  }
+
+  if (netDiag.envProxy) {
+    return {
+      tone: 'warning',
+      badge: '前置代理中',
+      title: '当前已启用前置代理链路',
+      desc: '服务可用，出口结果会受前置代理影响。',
+      meta: netDiag.envProxy ? ('当前前置代理：' + netDiag.envProxy) : '当前前置代理：未设置',
+      actions: ['确认出口是否符合预期'],
+    };
+  }
+
+  return {
+    tone: 'success',
+    badge: '正常',
+    title: '当前链路正常',
+    desc: summary.totalEnabled
+      ? ('已检查 ' + esc(String(summary.checked || 0)) + ' 个出口，未发现异常。')
+      : '当前没有启用出口节点，按默认路由工作。',
+    meta: '概览页仅保留关键状态。',
+    actions: ['需要时再看日志'],
+  };
+}
+
+function renderSummaryActions(actions) {
+  const list = Array.isArray(actions) ? actions.filter(Boolean) : [];
+  if (!list.length) {
+    return '<span class="summary-action">暂无额外建议</span>';
+  }
+  return list.map((item) => '<span class="summary-action">' + esc(item) + '</span>').join('');
+}
+
+function updateOverviewSummary(netDiag) {
+  const summary = buildNetDiagSummary(netDiag);
+  const shell = document.getElementById('ovRunSummary');
+  const badge = document.getElementById('ovSummaryBadge');
+  const title = document.getElementById('ovSummaryTitle');
+  const desc = document.getElementById('ovSummaryDesc');
+  const meta = document.getElementById('ovSummaryMeta');
+  const actions = document.getElementById('ovSummaryActions');
+
+  if (!shell || !badge || !title || !desc || !meta || !actions) {
+    return;
+  }
+
+  shell.className = 'summary-shell ' + summary.tone;
+  badge.className = 'summary-badge ' + summary.tone;
+  badge.innerHTML = '<span class="summary-badge-dot"></span>' + esc(summary.badge);
+  title.textContent = summary.title;
+  desc.textContent = summary.desc;
+  meta.textContent = summary.meta;
+  actions.innerHTML = renderSummaryActions(summary.actions);
+}
+
+
+function renderNetDiag(netDiag) {
+  const summary = netDiag.upstreamCheckSummary || { totalEnabled: 0, checked: 0, ok: 0, failed: 0, skipped: 0 };
+  const checks = Array.isArray(netDiag.upstreamChecks) ? netDiag.upstreamChecks : [];
+  const failedChecks = checks.filter((item) => !item.ok).slice(0, 2);
+  const currentEgress = netDiag.rooProbeUpstream
+    ? ('当前出口节点：' + netDiag.rooProbeUpstream)
+    : '当前出口：经 Roo';
+  const currentEgressValue = getDiagValue(netDiag.rooProxyMeta, netDiag.rooProxyIp);
+  const relayStatus = netDiag.envProxy ? esc(netDiag.envProxy) : '未设置';
 
   return [
-    '<div style="display:grid;gap:16px">',
-      hasFailedChecks
-        ? ('<div style="border:1px solid #fecaca;background:#fff1f2;color:#991b1b;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7">'
-            + '<strong>检测到上游连通性异常</strong><br>'
-            + '已自动预检 ' + esc(String(summary.checked)) + ' 个上游，其中失败 ' + esc(String(summary.failed)) + ' 个。请先修复上游配置，再测试站点访问。'
-          + '</div>')
-        : '',
-      '<div>',
-        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">出口结果</div>',
-        '<div style="display:grid;gap:10px">',
-          mergedEgress.map((item) =>
-            '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff">'
-              + '<div style="font-size:12px;color:var(--text-3);margin-bottom:4px">' + esc(item.labels.join(' / ')) + '</div>'
-              + '<div style="font-size:13px;color:var(--text);line-height:1.6;word-break:break-all">' + esc(item.value) + '</div>'
-            + '</div>'
-          ).join(''),
+    '<div class="section-stack">',
+      '<div class="diag-grid">',
+        '<div class="diag-panel">',
+          '<div class="diag-title">当前路径</div>',
+          '<div class="diag-list">',
+            '<div class="diag-block">',
+              '<div class="diag-caption">前置代理</div>',
+              '<div class="diag-text">' + relayStatus + '</div>',
+            '</div>',
+            '<div class="diag-block">',
+              '<div class="diag-caption">' + esc(currentEgress) + '</div>',
+              '<div class="diag-text">' + esc(currentEgressValue) + '</div>',
+            '</div>',
+          '</div>',
         '</div>',
-      '</div>',
-      '<div>',
-        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">上游连通性预检</div>',
-        '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff">',
-          '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">启用上游 ' + esc(String(summary.totalEnabled || 0)) + ' 个，已检查 ' + esc(String(summary.checked || 0)) + ' 个，成功 ' + esc(String(summary.ok || 0)) + ' 个，失败 ' + esc(String(summary.failed || 0)) + ' 个' + ((summary.skipped || 0) > 0 ? ('，未检查 ' + esc(String(summary.skipped))) : '') + '</div>',
-          checks.length
-            ? ('<div style="display:grid;gap:8px">'
-                + checks.map((item) =>
-                  '<div style="border:1px solid ' + (item.ok ? 'var(--border-soft)' : '#fecaca') + ';border-radius:8px;padding:10px 12px;background:' + (item.ok ? '#fff' : '#fff7f7') + '">'
-                    + '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center">'
-                      + '<div style="font-size:13px;color:var(--text);font-weight:600">' + esc(item.name) + '</div>'
-                      + '<div style="font-size:12px;color:' + (item.ok ? '#065f46' : '#991b1b') + '">' + (item.ok ? '可连通' : '不可连通') + '</div>'
+        '<div class="diag-panel">',
+          '<div class="diag-title">出口检查</div>',
+          '<div class="diag-stats">',
+            '<div class="diag-stat"><div class="diag-stat-label">启用</div><div class="diag-stat-value">' + esc(String(summary.totalEnabled || 0)) + '</div></div>',
+            '<div class="diag-stat"><div class="diag-stat-label">已检查</div><div class="diag-stat-value">' + esc(String(summary.checked || 0)) + '</div></div>',
+            '<div class="diag-stat"><div class="diag-stat-label">正常</div><div class="diag-stat-value">' + esc(String(summary.ok || 0)) + '</div></div>',
+            '<div class="diag-stat"><div class="diag-stat-label">异常</div><div class="diag-stat-value">' + esc(String(summary.failed || 0)) + '</div></div>',
+          '</div>',
+          failedChecks.length
+            ? ('<div class="diag-list">'
+                + failedChecks.map((item) =>
+                  '<div class="diag-block bad">'
+                    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+                      + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + esc(item.name) + '</div>'
+                      + '<span class="badge badge-red"><span class="badge-dot"></span>异常</span>'
                     + '</div>'
-                    + '<div style="margin-top:6px;font-size:12px;color:var(--text-2);line-height:1.6;word-break:break-all">'
-                      + (item.ok
-                        ? ('出口：' + esc(getDiagValue(item.meta, item.ip)))
-                        : ('错误：' + esc(item.error || '连接失败')))
-                      + (item.viaEnabled ? ' · 含 via 链路' : '')
-                    + '</div>'
+                    + '<div class="diag-text" style="margin-top:6px;font-size:12px;color:var(--text-2)">' + esc(item.error || '连接失败') + '</div>'
                   + '</div>'
                 ).join('')
               + '</div>')
-            : '<div style="font-size:12px;color:var(--text-3)">当前没有启用上游，暂未执行预检。</div>',
+            : '<div class="diag-note diag-note-success">未发现出口异常。</div>',
         '</div>',
-      '</div>',
-      '<div>',
-        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">代理环境</div>',
-        '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff">',
-          '<div style="font-size:12px;color:var(--text-3);margin-bottom:4px">当前 Roo 环境代理</div>',
-          '<div style="font-size:13px;color:var(--text);line-height:1.6;word-break:break-all">' + esc(netDiag.envProxy || '未设置') + '</div>',
-          envItems.length
-            ? ('<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-soft);display:grid;gap:6px">'
-                + envItems.map(([k, v]) =>
-                  '<div style="display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:start">'
-                    + '<div style="font-size:12px;color:var(--text-3)">' + esc(k) + '</div>'
-                    + '<div style="font-size:12.5px;color:var(--text);word-break:break-all">' + esc(v) + '</div>'
-                  + '</div>'
-                ).join('')
-              + '</div>')
-            : '<div style="margin-top:10px;font-size:12px;color:var(--text-3)">当前没有设置环境代理变量</div>',
-        '</div>',
-      '</div>',
-      '<div>',
-        '<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">说明</div>',
-        '<div style="border:1px solid var(--border-soft);border-radius:10px;padding:12px 14px;background:#fff;font-size:13px;color:var(--text);line-height:1.7">'
-          + esc(netDiag.routeHint || 'Roo 当前会结合环境代理、路由规则和上游健康状态决定实际出口。')
-        + '</div>',
       '</div>',
     '</div>'
   ].join('');
@@ -952,23 +1146,212 @@ function renderEnvSettings() {
   document.getElementById('envNoProxy').value = current.NO_PROXY || '';
 }
 
-// ---- Overview ----
-async function loadOverview() {
+function summarizeSystemProxy(status) {
+  if (!status) {
+    return '暂未获取系统代理状态';
+  }
+  if (!status.supported) {
+    return '当前系统不支持接管（仅支持 macOS）';
+  }
+  if (status.managed) {
+    if (status.selectSource === 'default-route') {
+      return 'macOS 系统代理已接管到默认路由接口对应服务';
+    }
+    return 'macOS 系统代理当前已由 Roo 本地入口接管';
+  }
+  if (status.snapshot) {
+    return '当前未接管，但存在可恢复的系统代理快照';
+  }
+  return '当前仍使用系统原始代理配置，尚未由 Roo 接管';
+}
+
+function renderSystemProxyStatus(status) {
+  systemProxyStatus = status || null;
+  const summary = document.getElementById('sysProxySummary');
+  const detail = document.getElementById('sysProxyDetail');
+  const enableBtn = document.getElementById('enableSystemProxyBtn');
+  const disableBtn = document.getElementById('disableSystemProxyBtn');
+  const restoreBtn = document.getElementById('restoreSystemProxyBtn');
+
+  if (!summary || !detail || !enableBtn || !disableBtn || !restoreBtn) {
+    return;
+  }
+
+  summary.textContent = summarizeSystemProxy(status);
+
+  if (!status) {
+    detail.innerHTML = '<div>状态：未知</div>';
+    enableBtn.disabled = false;
+    disableBtn.disabled = false;
+    restoreBtn.disabled = false;
+    return;
+  }
+
+  const current = status.current || {};
+  const serviceOrder = Array.isArray(status.serviceOrder) ? status.serviceOrder : [];
+  const sourceText = status.selectSource === 'default-route'
+    ? '按默认路由接口自动选择'
+    : status.selectSource === 'preferred'
+      ? '按显式配置指定'
+      : '按回退规则选择';
+  const defaultRouteText = status.defaultInterface
+    ? ('默认路由接口：' + status.defaultInterface)
+    : '默认路由接口：未识别';
+  const serviceHint = status.device
+    ? (status.service + ' (' + status.device + ')')
+    : (status.service || '-');
+
+  const formatItem = (label, item) => {
+    const value = item && item.enabled ? ((item.host || '-') + ':' + (item.port || '-')) : '关闭';
+    return '<div><strong>' + esc(label) + '：</strong>' + esc(value) + '</div>';
+  };
+
+  const serviceMap = serviceOrder.length
+    ? ('<div style="margin-top:6px"><strong>服务映射：</strong>'
+      + serviceOrder.map((item) => {
+        const text = item.device
+          ? (item.service + ' (' + item.device + ')')
+          : item.service;
+        return '<span style="display:inline-block;margin-right:8px">' + esc(text) + '</span>';
+      }).join('')
+      + '</div>')
+    : '';
+
+  detail.innerHTML = [
+    '<div><strong>当前接管服务：</strong>' + esc(serviceHint) + '</div>',
+    '<div><strong>选择依据：</strong>' + esc(sourceText) + '</div>',
+    '<div><strong>' + esc(defaultRouteText) + '</strong></div>',
+    serviceMap,
+    '<div><strong>Roo 本地入口：</strong>' + esc(status.localEndpoint || '-') + '</div>',
+    '<div><strong>恢复快照：</strong>' + esc(status.snapshot?.savedAt ? new Date(status.snapshot.savedAt).toLocaleString('zh-CN') : '无') + '</div>',
+    '<div style="margin-top:6px">' + formatItem('HTTP', current.web) + formatItem('HTTPS', current.secureweb) + formatItem('SOCKS', current.socksfirewall) + '</div>'
+  ].join('');
+
+  const unsupported = status.supported === false;
+  enableBtn.disabled = unsupported || Boolean(status.managed);
+  disableBtn.disabled = unsupported || !status.managed;
+  restoreBtn.disabled = unsupported || !status.snapshot;
+}
+
+async function loadSystemProxyStatus() {
   try {
-    const [status, diagnostics] = await Promise.all([
-      api('/status'),
-      api('/network-diagnostics').catch(() => null),
-    ]);
-    lastStatus = status;
-    renderOverview(status, diagnostics);
-    document.getElementById('sidebarStatus').textContent = '服务运行中';
+    const status = await api('/system-proxy');
+    renderSystemProxyStatus(status);
   } catch (e) {
-    document.getElementById('ovStatus').textContent = '离线';
-    document.getElementById('sidebarStatus').textContent = '服务异常';
+    renderSystemProxyStatus(null);
+    const summary = document.getElementById('sysProxySummary');
+    const detail = document.getElementById('sysProxyDetail');
+    if (summary) summary.textContent = '读取系统代理状态失败';
+    if (detail) detail.innerHTML = '<div style="color:var(--red)">错误：' + esc(e.message) + '</div>';
   }
 }
 
-function renderOverview(s, diagnostics) {
+async function applySystemProxyAction(action, buttonId, loadingText, successText) {
+  const btn = document.getElementById(buttonId);
+  if (!btn) {
+    return;
+  }
+
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = loadingText;
+  try {
+    const result = await api('/system-proxy/' + action, { method: 'POST' });
+    renderSystemProxyStatus(result);
+    toast(successText);
+    loadOverview();
+  } catch (e) {
+    toast('系统代理操作失败：' + e.message, 'error');
+    await loadSystemProxyStatus();
+  } finally {
+    btn.textContent = originalText;
+  }
+}
+
+function setNetDiagLoading(message = '网络状态刷新中...') {
+  const el = document.getElementById('ovNetDiag');
+  if (!el) return;
+  const shell = document.getElementById('ovRunSummary');
+  const badge = document.getElementById('ovSummaryBadge');
+  const title = document.getElementById('ovSummaryTitle');
+  const desc = document.getElementById('ovSummaryDesc');
+  const meta = document.getElementById('ovSummaryMeta');
+  const actions = document.getElementById('ovSummaryActions');
+  if (shell) shell.className = 'summary-shell neutral';
+  if (badge) badge.className = 'summary-badge neutral';
+  if (badge) badge.innerHTML = '<span class="summary-badge-dot"></span>加载中';
+  if (title) title.textContent = '正在评估当前链路状态';
+  if (desc) desc.textContent = message;
+  if (meta) meta.textContent = '请稍候，系统正在刷新关键状态。';
+
+  if (actions) actions.innerHTML = '<span class="summary-action">等待诊断完成</span>';
+  el.innerHTML = '<div class="diag-note">' + esc(message) + '</div>';
+}
+
+function setNetDiagError(message = '网络诊断刷新失败，请稍后重试') {
+  const el = document.getElementById('ovNetDiag');
+  if (!el) return;
+  updateOverviewSummary({
+    upstreamCheckSummary: { totalEnabled: 0, checked: 0, ok: 0, failed: 1, skipped: 0 },
+    upstreamChecks: [{ name: 'network-diagnostics', ok: false, error: message }],
+    envProxy: null,
+  });
+  el.innerHTML = '<div class="diag-note diag-note-danger">' + esc(message) + '</div>';
+}
+
+async function refreshNetworkDiagnostics(token) {
+  const el = document.getElementById('ovNetDiag');
+  const hasExistingContent = Boolean(el && el.innerHTML.trim());
+  if (!hasExistingContent) {
+    setNetDiagLoading();
+  }
+  try {
+    const diagnostics = await api('/network-diagnostics');
+    if (token !== overviewRefreshToken) {
+      return;
+    }
+    updateOverviewSummary(diagnostics || {});
+    const nextRender = renderNetDiag(diagnostics || {});
+    const nextRenderKey = JSON.stringify(diagnostics || {});
+    if (el && nextRenderKey !== lastNetDiagRenderKey) {
+      el.innerHTML = nextRender;
+      lastNetDiagRenderKey = nextRenderKey;
+    }
+  } catch (error) {
+    if (token !== overviewRefreshToken) {
+      return;
+    }
+    setNetDiagError('网络诊断刷新失败：' + (error.message || '未知错误'));
+  }
+}
+
+async function loadOverview() {
+  const token = Date.now();
+  overviewRefreshToken = token;
+
+  try {
+    const status = await api('/status');
+    if (token !== overviewRefreshToken) {
+      return;
+    }
+
+    lastStatus = status;
+    renderOverview(status);
+    document.getElementById('sidebarStatus').textContent = '服务运行中';
+
+    refreshNetworkDiagnostics(token);
+  } catch (e) {
+    if (token !== overviewRefreshToken) {
+      return;
+    }
+
+    document.getElementById('ovStatus').textContent = '离线';
+    document.getElementById('sidebarStatus').textContent = '服务异常';
+    setNetDiagError('服务状态获取失败，暂无法刷新网络诊断');
+  }
+}
+
+function renderOverview(s) {
   const running = s.running !== false;
   document.getElementById('ovStatus').innerHTML = running
     ? '<span style="color:var(--green)">● 运行中</span>'
@@ -982,21 +1365,19 @@ function renderOverview(s, diagnostics) {
   const health = s.upstreamHealth || [];
   const healthy = health.filter(h => h.healthy).length;
   document.getElementById('ovUpstream').innerHTML = healthy + '<small>/ ' + health.length + '</small>';
-  document.getElementById('ovUpstreamHint').textContent = healthy === health.length
-    ? '全部健康运行'
-    : (health.length - healthy) + ' 个异常';
+  document.getElementById('ovUpstreamHint').textContent = health.length
+    ? (healthy === health.length ? '全部健康运行' : (health.length - healthy) + ' 个异常待处理')
+    : '暂无启用出口节点';
 
-  // 平均延迟
   const ups = st.upstreams || {};
   let totalReq = 0, totalDur = 0;
   Object.values(ups).forEach(u => { totalReq += u.requests || 0; totalDur += u.totalDurationMs || 0; });
   const avg = totalReq ? (totalDur / totalReq) : 0;
   document.getElementById('ovLatency').innerHTML = (avg / 1000).toFixed(1) + '<small>s</small>';
-  document.getElementById('ovLatencyHint').textContent = totalReq + ' 个代理请求统计';
+  document.getElementById('ovLatencyHint').textContent = totalReq ? (totalReq + ' 个代理请求统计') : '暂无代理请求样本';
 
-  // Health table
   const hw = document.getElementById('ovHealthWrap');
-  if (!health.length) { hw.innerHTML = '<div class="empty-tip">暂无上游配置</div>'; }
+  if (!health.length) { hw.innerHTML = '<div class="empty-tip">暂无出口节点配置</div>'; }
   else {
     hw.innerHTML = '<table><thead><tr><th>名称</th><th>状态</th><th>请求数</th><th>成功率</th><th>平均延迟</th></tr></thead><tbody>' +
       health.map(h => {
@@ -1013,7 +1394,6 @@ function renderOverview(s, diagnostics) {
       }).join('') + '</tbody></table>';
   }
 
-  // Info
   const env = s.env || {};
   const info = [
     ['配置来源', s.configSource || '-'],
@@ -1026,9 +1406,7 @@ function renderOverview(s, diagnostics) {
     ['最后更新', st.updatedAt ? new Date(st.updatedAt).toLocaleString('zh-CN') : '-']
   ];
   document.getElementById('ovInfo').innerHTML = info.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
-
-  const netDiag = diagnostics || {};
-  document.getElementById('ovNetDiag').innerHTML = renderNetDiag(netDiag);
+}
 
 
 // ---- Config ----
@@ -1090,6 +1468,23 @@ async function loadEnvSettings() {
   }
 }
 
+document.getElementById('refreshSystemProxyBtn').addEventListener('click', async () => {
+  await loadSystemProxyStatus();
+  toast('系统代理状态已刷新');
+});
+
+document.getElementById('enableSystemProxyBtn').addEventListener('click', async () => {
+  await applySystemProxyAction('enable', 'enableSystemProxyBtn', '开启中...', '系统代理已切换到 Roo 本地入口');
+});
+
+document.getElementById('disableSystemProxyBtn').addEventListener('click', async () => {
+  await applySystemProxyAction('disable', 'disableSystemProxyBtn', '关闭中...', '系统代理接管已关闭');
+});
+
+document.getElementById('restoreSystemProxyBtn').addEventListener('click', async () => {
+  await applySystemProxyAction('restore', 'restoreSystemProxyBtn', '恢复中...', '系统代理已恢复到接管前状态');
+});
+
 document.getElementById('applyEnvBtn').addEventListener('click', async () => {
   const btn = document.getElementById('applyEnvBtn');
   btn.disabled = true;
@@ -1106,13 +1501,13 @@ document.getElementById('applyEnvBtn').addEventListener('click', async () => {
       }),
     });
     renderEnvSettings();
-    toast('环境代理已保存到 .env，并已更新当前 Roo 进程');
+    toast('前置跳板已保存到 .env，并已更新当前 Roo 进程');
     loadOverview();
   } catch (e) {
-    toast('保存环境代理失败：' + e.message, 'error');
+    toast('保存前置跳板失败：' + e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '保存环境代理';
+    btn.textContent = '保存前置跳板';
   }
 });
 
@@ -1120,10 +1515,23 @@ document.getElementById('resetEnvBtn').addEventListener('click', async () => {
   try {
     envSettings = await api('/env-settings');
     renderEnvSettings();
-    toast('已恢复为当前生效的环境代理配置');
+    toast('已恢复为当前生效的前置跳板配置');
   } catch (e) {
-    toast('重置环境代理失败：' + e.message, 'error');
+    toast('重置前置跳板失败：' + e.message, 'error');
   }
+});
+
+function renderUpViaGroup() {
+  const group = document.getElementById('upViaGroup');
+  const btn = document.getElementById('toggleUpViaBtn');
+  if (!group || !btn) return;
+  group.style.display = upViaExpanded ? '' : 'none';
+  btn.textContent = upViaExpanded ? '收起高级设置：单独 via' : '高级设置：单独 via';
+}
+
+document.getElementById('toggleUpViaBtn').addEventListener('click', () => {
+  upViaExpanded = !upViaExpanded;
+  renderUpViaGroup();
 });
 
 document.getElementById('cfgStrategy').addEventListener('change', e => { if (cfg) cfg.balance_strategy = e.target.value; });
@@ -1133,7 +1541,9 @@ document.getElementById('cfgDefaultRoute').addEventListener('change', e => { if 
 
 document.getElementById('addUpstreamBtn').addEventListener('click', () => {
   editUpIdx = -1;
-  document.getElementById('upstreamModalTitle').textContent = '添加上游代理';
+  upViaExpanded = false;
+  renderUpViaGroup();
+  document.getElementById('upstreamModalTitle').textContent = '添加出口节点';
   document.getElementById('upName').value = '';
   document.getElementById('upUrl').value = '';
   document.getElementById('upVia').value = '';
@@ -1144,7 +1554,9 @@ document.getElementById('addUpstreamBtn').addEventListener('click', () => {
 window.editUpstream = i => {
   editUpIdx = i;
   const u = cfg.upstreams[i];
-  document.getElementById('upstreamModalTitle').textContent = '编辑上游代理';
+  upViaExpanded = Boolean(u.via);
+  renderUpViaGroup();
+  document.getElementById('upstreamModalTitle').textContent = '编辑出口节点';
   document.getElementById('upName').value = u.name;
   document.getElementById('upUrl').value = u.url;
   document.getElementById('upVia').value = u.via || '';
@@ -1154,7 +1566,7 @@ window.editUpstream = i => {
 };
 
 window.delUpstream = i => {
-  if (!confirm('确认删除该上游代理？相关规则的引用也将清除。')) return;
+  if (!confirm('确认删除该出口节点？相关规则的引用也将清除。')) return;
   const name = cfg.upstreams[i].name;
   cfg.upstreams.splice(i, 1);
   cfg.rules.forEach(r => { r.upstreams = (r.upstreams || []).filter(n => n !== name); });
@@ -1188,7 +1600,7 @@ let editRuleIdx = -1;
 function renderRuleUpstreams(selected) {
   const names = (cfg?.upstreams || []).map(u => u.name);
   const el = document.getElementById('ruleUpstreamCheckboxes');
-  if (!names.length) { el.innerHTML = '<span style="font-size:13px;color:var(--text-3)">请先添加上游代理</span>'; return; }
+  if (!names.length) { el.innerHTML = '<span style="font-size:13px;color:var(--text-3)">请先添加出口节点</span>'; return; }
   el.innerHTML = names.map(n =>
     '<label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;cursor:pointer">' +
     '<input type="checkbox" value="' + esc(n) + '"' + (selected.includes(n) ? ' checked' : '') + ' style="width:14px;height:14px">' +
@@ -1201,7 +1613,7 @@ document.getElementById('ruleAction').addEventListener('change', e => {
 
 document.getElementById('addRuleBtn').addEventListener('click', () => {
   editRuleIdx = -1;
-  document.getElementById('ruleModalTitle').textContent = '添加路由规则';
+  document.getElementById('ruleModalTitle').textContent = '添加分流规则';
   document.getElementById('ruleType').value = 'domain-suffix';
   document.getElementById('ruleValue').value = '';
   document.getElementById('ruleAction').value = 'proxy';
@@ -1213,7 +1625,7 @@ document.getElementById('addRuleBtn').addEventListener('click', () => {
 window.editRule = i => {
   editRuleIdx = i;
   const r = cfg.rules[i];
-  document.getElementById('ruleModalTitle').textContent = '编辑路由规则';
+  document.getElementById('ruleModalTitle').textContent = '编辑分流规则';
   document.getElementById('ruleType').value = r.type;
   document.getElementById('ruleValue').value = r.value;
   document.getElementById('ruleAction').value = r.action;
@@ -1262,6 +1674,66 @@ document.getElementById('applyConfigBtn').addEventListener('click', async () => 
   }
 });
 
+document.getElementById('exportConfigBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('exportConfigBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '导出中...';
+  try {
+    const currentConfig = await api('/config');
+    downloadConfig(currentConfig);
+    toast('当前配置已导出');
+  } catch (e) {
+    toast('导出失败：' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+});
+
+document.getElementById('importConfigBtn').addEventListener('click', () => {
+  document.getElementById('configImportInput').click();
+});
+
+document.getElementById('configImportInput').addEventListener('change', async (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  if (!confirm('导入配置会覆盖当前未保存的修改，并立即保存生效。确认继续？')) {
+    event.target.value = '';
+    return;
+  }
+
+  const btn = document.getElementById('importConfigBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '导入中...';
+
+  try {
+    const raw = await file.text();
+    let importedConfig;
+    try {
+      importedConfig = JSON.parse(raw);
+    } catch {
+      throw new Error('文件不是合法 JSON');
+    }
+
+    const result = await api('/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(importedConfig)
+    });
+    originalCfg = JSON.parse(JSON.stringify(result.config || importedConfig));
+    cfg = JSON.parse(JSON.stringify(originalCfg));
+    renderConfig();
+    toast('配置已导入并应用：' + file.name);
+  } catch (e) {
+    toast('导入失败：' + e.message, 'error');
+  } finally {
+    event.target.value = '';
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+});
+
 document.getElementById('resetConfigBtn').addEventListener('click', () => {
   if (!originalCfg) return;
   if (!confirm('确认重置为上次保存的配置？')) return;
@@ -1296,7 +1768,7 @@ async function loadLogs() {
           ? '<div><strong>' + esc(l.hostname || '-') + '</strong></div>' +
             '<div style="font-size:12px;color:var(--text-3);margin-top:2px">' +
             '路由: ' + esc(l.rule || '默认') + ' · ' +
-            '上游: ' + esc(l.upstream || (l.isDirect ? '直连' : '-')) +
+            '出口节点: ' + esc(l.upstream || (l.isDirect ? '直连' : '-')) +
             (l.error ? ' · 错误: ' + esc(l.error) : '') +
             '</div>'
           : '<div><strong>' + esc(l.message || l.raw || '-') + '</strong></div>' +
@@ -1318,21 +1790,35 @@ async function loadLogs() {
 document.getElementById('refreshLogsBtn').addEventListener('click', loadLogs);
 
 document.getElementById('reloadRulesBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('reloadRulesBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '重新拉取中...';
+
   try {
     await api('/reload', { method: 'POST' });
-    toast('规则已重新拉取');
-    loadOverview();
+    toast('规则已重新拉取，正在刷新概览');
+    await loadOverview();
     cfg = await api('/config');
     originalCfg = JSON.parse(JSON.stringify(cfg));
     renderConfig();
   } catch (e) {
     toast('重载失败：' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 });
 
 async function init() {
   loadOverview();
-  loadEnvSettings();
+  try {
+    envSettings = await api('/env-settings');
+    renderEnvSettings();
+  } catch (e) {
+    toast('加载前置跳板失败：' + e.message, 'error');
+  }
+  await loadSystemProxyStatus();
   try {
     cfg = await api('/config');
     originalCfg = JSON.parse(JSON.stringify(cfg));
@@ -1340,6 +1826,7 @@ async function init() {
   } catch (e) {
     toast('加载配置失败：' + e.message, 'error');
   }
+  renderUpViaGroup();
 }
 
 init();
@@ -1399,7 +1886,49 @@ function createDashboard(options = {}) {
       const settings = await readEffectiveEnvSettings();
       res.json(settings);
     } catch (error) {
-      res.status(500).json({ message: error.message || '读取环境代理失败' });
+      res.status(500).json({ message: error.message || '读取前置跳板失败' });
+    }
+  });
+
+  app.get('/system-proxy', async (req, res) => {
+    try {
+      const status = await getSystemProxyStatus(configManager.settings);
+      res.json(status);
+    } catch (error) {
+      res.status(400).json({ message: error.message || '读取系统代理状态失败' });
+    }
+  });
+
+  app.post('/system-proxy/enable', async (req, res) => {
+    try {
+      const status = await enableSystemProxy(configManager.settings, {
+        service: req.body && req.body.service ? String(req.body.service).trim() : undefined,
+      });
+      res.json(status);
+    } catch (error) {
+      res.status(400).json({ message: error.message || '开启系统代理接管失败' });
+    }
+  });
+
+  app.post('/system-proxy/disable', async (req, res) => {
+    try {
+      const status = await disableSystemProxy(configManager.settings, {
+        service: req.body && req.body.service ? String(req.body.service).trim() : undefined,
+      });
+      res.json(status);
+    } catch (error) {
+      res.status(400).json({ message: error.message || '关闭系统代理接管失败' });
+    }
+  });
+
+  app.post('/system-proxy/restore', async (req, res) => {
+    try {
+      const status = await restoreSystemProxy(configManager.settings, {
+        service: req.body && req.body.service ? String(req.body.service).trim() : undefined,
+      });
+      res.json(status);
+    } catch (error) {
+      res.status(400).json({ message: error.message || '恢复系统代理失败' });
     }
   });
 
@@ -1413,9 +1942,9 @@ function createDashboard(options = {}) {
       };
       const saved = await writeEnvSettings(nextValues);
       applyEnvToProcess(saved.values);
-      res.json({ file: saved.values, effective: saved.values, message: '环境代理已保存' });
+      res.json({ file: saved.values, effective: saved.values, message: '前置跳板已保存' });
     } catch (error) {
-      res.status(400).json({ message: error.message || '保存环境代理失败' });
+      res.status(400).json({ message: error.message || '保存前置跳板失败' });
     }
   });
 

@@ -121,6 +121,9 @@ async function createRooServer(config) {
     host: '127.0.0.1',
     configManager: {
       getConfig: () => config,
+      settings: {
+        localPort: 0,
+      },
     },
     balancer,
     logger,
@@ -228,4 +231,71 @@ test('proxy returns 502 when a rule points to unavailable upstreams only', async
   const response = await requestViaProxy(roo.port, `http://localhost:${target.port}/needs-proxy`);
   assert.equal(response.statusCode, 502);
   assert.match(response.body, /当前没有可用的上游代理/);
+});
+
+test('proxy falls back to next upstream when relay chain is unavailable', async (t) => {
+  const target = await createTargetServer();
+  const healthyProxy = await createRecordingHttpProxy('healthy-upstream');
+  const loggerCalls = [];
+  const logger = {
+    info: async () => {},
+    access: async () => {},
+    error: async (message, meta) => {
+      loggerCalls.push({ message, meta });
+    },
+  };
+
+  const balancer = new UpstreamBalancer({ logger });
+  const config = {
+    balance_strategy: 'round-robin',
+    default_route: {
+      action: 'proxy',
+      upstreams: ['bad-relay-upstream', 'healthy-upstream'],
+    },
+    upstreams: [
+      { name: 'bad-relay-upstream', url: `http://127.0.0.1:${healthyProxy.port}`, via: 'http://bad-relay:65530', enabled: true, weight: 1 },
+      { name: 'healthy-upstream', url: `http://127.0.0.1:${healthyProxy.port}`, enabled: true, weight: 1 },
+    ],
+    rules: [],
+  };
+  balancer.updateConfig(config);
+
+  const proxy = createProxyServer({
+    port: 0,
+    host: '127.0.0.1',
+    configManager: {
+      getConfig: () => config,
+      settings: {
+        localPort: 0,
+      },
+    },
+    balancer,
+    logger,
+    stats: createStatsStub(),
+    chainManager: {
+      async getChainUrl(viaUrl, upstreamUrl) {
+        return upstreamUrl;
+      },
+      async probeUpstream(viaUrl) {
+        if (viaUrl.includes('bad-relay')) {
+          throw new Error('前置代理不可用');
+        }
+      },
+    },
+  });
+
+  await proxy.listen();
+
+  t.after(async () => {
+    await Promise.all([
+      close(target.server),
+      close(healthyProxy.server),
+      proxy.close(),
+    ]);
+  });
+
+  const response = await requestViaProxy(proxy.getServer().port, `http://127.0.0.1:${target.port}/relay-fallback`);
+  assert.equal(response.statusCode, 200);
+  assert.ok(loggerCalls.some((item) => item.message.includes('已尝试切流')));
+  assert.ok(loggerCalls.some((item) => item.meta && item.meta.upstream === 'bad-relay-upstream'));
 });

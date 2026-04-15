@@ -9,6 +9,8 @@
 
 const net = require('net');
 const http = require('http');
+const https = require('https');
+const tls = require('tls');
 const { SocksClient } = require('socks');
 
 // ---- URL 解析工具 ----
@@ -44,20 +46,24 @@ function isHttpProtocol(url) {
 function createHttpConnectTunnel(viaUrl, targetHost, targetPort) {
   const via = new URL(viaUrl);
   const viaPort = Number(via.port) || (via.protocol === 'https:' ? 443 : 80);
+  const requestImpl = via.protocol === 'https:' ? https.request : http.request;
 
   return new Promise((resolve, reject) => {
-    const headers = {};
+    const headers = {
+      Host: `${targetHost}:${targetPort}`,
+    };
     if (via.username) {
       const cred = `${decodeURIComponent(via.username)}:${decodeURIComponent(via.password || '')}`;
       headers['Proxy-Authorization'] = `Basic ${Buffer.from(cred).toString('base64')}`;
     }
 
-    const req = http.request({
+    const req = requestImpl({
       host: via.hostname,
       port: viaPort,
       method: 'CONNECT',
       path: `${targetHost}:${targetPort}`,
       headers,
+      servername: via.protocol === 'https:' ? via.hostname : undefined,
     });
 
     req.on('connect', (res, socket) => {
@@ -74,6 +80,23 @@ function createHttpConnectTunnel(viaUrl, targetHost, targetPort) {
   });
 }
 
+async function upgradeSocketToTls(socket, servername) {
+  return new Promise((resolve, reject) => {
+    const secureSocket = tls.connect({ socket, servername });
+    const onError = (error) => {
+      secureSocket.removeListener('secureConnect', onSecureConnect);
+      reject(error);
+    };
+    const onSecureConnect = () => {
+      secureSocket.removeListener('error', onError);
+      resolve(secureSocket);
+    };
+
+    secureSocket.once('error', onError);
+    secureSocket.once('secureConnect', onSecureConnect);
+  });
+}
+
 /**
  * 创建链式连接，返回已连接到 targetHost:targetPort 的 Socket。
  *
@@ -81,6 +104,7 @@ function createHttpConnectTunnel(viaUrl, targetHost, targetPort) {
  *   SOCKS5 via + SOCKS5 upstream → SocksClient.createConnectionChain
  *   HTTP    via + SOCKS5 upstream → HTTP CONNECT 隧道 + SocksClient.createConnection
  *   SOCKS5 via + HTTP   upstream  → via SOCKS 到 upstream，把 upstream 当 HTTP CONNECT proxy
+ *   HTTP    via + HTTP   upstream  → via 建隧道到 upstream，再通过 upstream CONNECT 到目标
  */
 async function createChainSocket(viaUrl, upstreamUrl, targetHost, targetPort) {
   const upstreamIsSOCKS = isSocksProtocol(upstreamUrl);
@@ -121,9 +145,26 @@ async function createChainSocket(viaUrl, upstreamUrl, targetHost, targetPort) {
       command: 'connect',
       destination: { host: upstreamParsed.hostname, port: upstreamPort },
     });
-    // 在 SOCKS 隧道上做 HTTP CONNECT
-    const targetSocket = await doHttpConnectOnSocket(socksSocket, upstreamUrl, targetHost, targetPort);
-    return targetSocket;
+
+    let tunnel = socksSocket;
+    if (upstreamParsed.protocol === 'https:') {
+      tunnel = await upgradeSocketToTls(tunnel, upstreamParsed.hostname);
+    }
+
+    return doHttpConnectOnSocket(tunnel, upstreamUrl, targetHost, targetPort);
+  }
+
+  // ④ HTTP via → HTTP upstream → target（先到 upstream，再由 upstream CONNECT 目标）
+  if (viaIsHTTP && upstreamIsHTTP) {
+    const upstreamParsed = new URL(upstreamUrl);
+    const upstreamPort = Number(upstreamParsed.port) || (upstreamParsed.protocol === 'https:' ? 443 : 80);
+    let tunnel = await createHttpConnectTunnel(viaUrl, upstreamParsed.hostname, upstreamPort);
+
+    if (upstreamParsed.protocol === 'https:') {
+      tunnel = await upgradeSocketToTls(tunnel, upstreamParsed.hostname);
+    }
+
+    return doHttpConnectOnSocket(tunnel, upstreamUrl, targetHost, targetPort);
   }
 
   throw new Error(
@@ -144,17 +185,23 @@ function doHttpConnectOnSocket(socket, upstreamUrl, targetHost, targetPort) {
   socket.write(headers.join('\r\n') + '\r\n\r\n');
 
   return new Promise((resolve, reject) => {
-    let buf = '';
+    let headerBuffer = Buffer.alloc(0);
     const onData = (chunk) => {
-      buf += chunk.toString('ascii');
-      const idx = buf.indexOf('\r\n\r\n');
+      headerBuffer = Buffer.concat([headerBuffer, chunk]);
+      const idx = headerBuffer.indexOf('\r\n\r\n');
       if (idx === -1) return;
       socket.removeListener('data', onData);
       socket.removeListener('error', reject);
-      const statusLine = buf.split('\r\n')[0];
-      const code = parseInt(statusLine.split(' ')[1]);
-      if (code === 200) resolve(socket);
-      else {
+      const responseHead = headerBuffer.subarray(0, idx).toString('latin1');
+      const statusLine = responseHead.split('\r\n')[0];
+      const code = parseInt(statusLine.split(' ')[1], 10);
+      const rest = headerBuffer.subarray(idx + 4);
+      if (code === 200) {
+        if (rest.length) {
+          socket.unshift(rest);
+        }
+        resolve(socket);
+      } else {
         socket.destroy();
         reject(new Error(`HTTP upstream CONNECT 失败，状态码：${code}`));
       }
@@ -243,6 +290,38 @@ class ChainProxyManager {
     await proxy.start();
     this.cache.set(key, proxy);
     return proxy.url;
+  }
+
+  async probeUpstream(viaUrl, upstreamUrl, options = {}) {
+    const {
+      targetHost = 'api.ip.sb',
+      targetPort = 443,
+      timeoutMs = 5_000,
+    } = options;
+
+    let timeoutId = null;
+    let socket = null;
+    try {
+      socket = await Promise.race([
+        createChainSocket(viaUrl, upstreamUrl, targetHost, targetPort),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('链路探测超时')), timeoutMs);
+        }),
+      ]);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      socket.destroy();
+      return true;
+    } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (socket) {
+        socket.destroy();
+      }
+      throw error;
+    }
   }
 
   /**

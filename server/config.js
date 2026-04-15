@@ -97,6 +97,7 @@ function getSettings() {
     dashboardPort: parseInteger(process.env.DASHBOARD_PORT, 7891),
     configSource,
     localConfigPath: resolveLocalConfigPath(process.env.LOCAL_CONFIG_PATH),
+    networkServiceName: (process.env.MACOS_NETWORK_SERVICE || '').trim(),
   };
 }
 
