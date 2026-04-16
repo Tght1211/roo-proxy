@@ -354,4 +354,4 @@ class ChainProxyManager {
   }
 }
 
-module.exports = { ChainProxyManager };
+module.exports = { ChainProxyManager, createHttpConnectTunnel };

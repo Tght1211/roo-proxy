@@ -771,7 +771,7 @@ function renderHtml() {
 
         <div class="card">
           <div class="card-h"><div class="card-title"><span class="dot"></span>系统代理接管（macOS）</div></div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">可将 macOS 系统代理直接指向 Roo 本地入口，避免手动在多个程序里重复配置代理端口。</div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">可将 macOS 系统代理直接指向 Roo 本地入口（同端口支持 HTTP / HTTPS CONNECT / SOCKS5），避免手动在多个程序里重复配置代理端口。</div>
           <div class="srow">
             <div>
               <div class="skey">当前接入方式</div>

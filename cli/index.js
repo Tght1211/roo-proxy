@@ -89,7 +89,7 @@ function printRuntimeSummary(status) {
     : '默认出口: 直连 / 系统路由';
 
   console.log(`Roo 运行中`);
-  console.log(`代理: 127.0.0.1:${status.localProxy.port}`);
+  console.log(`代理 (HTTP/HTTPS/SOCKS5): 127.0.0.1:${status.localProxy.port}`);
   console.log(`面板: 127.0.0.1:${status.dashboard.port}`);
   console.log(`${defaultRoute}`);
   console.log(`规则数: ${rules}`);
@@ -514,7 +514,7 @@ async function runInitWizard() {
     console.log('- 添加出口节点：roo upstream add residential-01 socks5://user:pass@host:1080');
     console.log('- 设置默认出口：roo default via vpn-default');
     console.log(`- 打开面板：http://127.0.0.1:${settings.dashboardPort}`);
-    console.log(`- 浏览器代理地址：127.0.0.1:${settings.localPort}`);
+    console.log(`- 本地入口 (HTTP/HTTPS/SOCKS5)：127.0.0.1:${settings.localPort}`);
   } finally {
     rl.close();
   }
@@ -610,7 +610,7 @@ program
     if (!status) {
       const settings = getRuntimeSettings();
       console.log('Roo 未运行');
-      console.log(`代理: 127.0.0.1:${settings.localPort}`);
+      console.log(`代理 (HTTP/HTTPS/SOCKS5): 127.0.0.1:${settings.localPort}`);
       console.log(`面板: 127.0.0.1:${settings.dashboardPort}`);
       return;
     }

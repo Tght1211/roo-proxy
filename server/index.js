@@ -1,9 +1,11 @@
+const net = require('net');
 const { ConfigManager, getSettings, loadEnv, isRemoteConfigEnabled } = require('./config');
 const { Logger } = require('./logger');
 const { StatsManager } = require('./stats');
 const { UpstreamBalancer } = require('./balancer');
 const { createProxyServer, getRelayLoopConflict } = require('./proxy');
 const { ChainProxyManager } = require('./chain');
+const { handleSocks5Connection } = require('./socks5');
 const { createDashboard } = require('../dashboard');
 const { getSystemProxyStatus } = require('./system-proxy');
 
@@ -117,8 +119,9 @@ async function bootstrap() {
     await logger.info('未配置 Gist 自动刷新，当前使用本地配置或静态配置源');
   }
 
+  // ProxyChain handles HTTP/HTTPS CONNECT on a random internal port.
   const proxyServer = createProxyServer({
-    port: settings.localPort,
+    port: 0,
     host: '127.0.0.1',
     configManager,
     balancer,
@@ -166,6 +169,39 @@ async function bootstrap() {
   });
 
   await proxyServer.listen();
+
+  // The multiplexer listens on LOCAL_PORT and routes:
+  //   first byte 0x05 → SOCKS5 handler
+  //   otherwise       → ProxyChain's internal HTTP server (HTTP + HTTPS CONNECT)
+  const internalHttpServer = proxyServer.getServer().server;
+  const muxSockets = new Set();
+  const multiplexer = net.createServer((socket) => {
+    muxSockets.add(socket);
+    socket.once('close', () => muxSockets.delete(socket));
+    socket.once('data', (firstChunk) => {
+      if (firstChunk[0] === 0x05) {
+        socket.pause();
+        socket.unshift(firstChunk);
+        handleSocks5Connection(socket, { balancer, configManager, logger, stats, chainManager })
+          .catch(() => socket.destroy());
+      } else {
+        socket.unshift(firstChunk);
+        internalHttpServer.emit('connection', socket);
+      }
+    });
+    socket.on('error', () => {});
+  });
+
+  await new Promise((resolve, reject) => {
+    multiplexer.once('error', reject);
+    multiplexer.listen(settings.localPort, '127.0.0.1', () => {
+      multiplexer.removeListener('error', reject);
+      resolve();
+    });
+  });
+
+  await logger.info(`Roo 代理服务已启动，监听 127.0.0.1:${settings.localPort}（HTTP / HTTPS / SOCKS5 同端口）`);
+
   await dashboard.listen();
 
   const shutdown = async (signal) => {
@@ -175,6 +211,9 @@ async function bootstrap() {
     stats.stopAutoFlush();
     await stats.persist().catch(() => {});
     await dashboard.close().catch(() => {});
+    for (const s of muxSockets) s.destroy();
+    muxSockets.clear();
+    await new Promise((resolve) => multiplexer.close(resolve)).catch(() => {});
     await proxyServer.close().catch(() => {});
     await chainManager.stopAll().catch(() => {});
     process.exit(0);

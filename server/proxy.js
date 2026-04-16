@@ -104,7 +104,7 @@ function createProxyServer(options = {}) {
       balancer.markSuccess(requestInfo.upstreamName);
     }
 
-    if (status === 'failed' && requestInfo.upstreamName) {
+    if (status === 'failed' && requestInfo.upstreamName && extra.markUpstreamFailure !== false) {
       balancer.markFailure(requestInfo.upstreamName, extra.error);
     }
 
@@ -262,7 +262,6 @@ function createProxyServer(options = {}) {
             },
           };
         } catch (error) {
-          balancer.markFailure(upstream.name, error);
           await logger.error('上游链路初始化失败，已尝试切流', {
             hostname,
             rule,
@@ -290,7 +289,11 @@ function createProxyServer(options = {}) {
     }
 
     const statusCode = response ? response.statusCode : 'unknown';
-    finalizeRequest(connectionId, 'failed', { error: new Error(`上游 CONNECT 失败，状态码：${statusCode}`) }).catch(() => {});
+    const shouldMarkFailure = statusCode === 407;
+    finalizeRequest(connectionId, 'failed', {
+      error: new Error(`上游 CONNECT 失败，状态码：${statusCode}`),
+      markUpstreamFailure: shouldMarkFailure,
+    }).catch(() => {});
   });
 
   server.on('connectionClosed', ({ connectionId }) => {
@@ -300,7 +303,6 @@ function createProxyServer(options = {}) {
   return {
     async listen() {
       await server.listen();
-      await logger.info(`Roo 代理服务已启动，监听 ${host}:${server.port}`);
     },
     async close() {
       await server.close(true);
