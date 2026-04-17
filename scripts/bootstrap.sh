@@ -45,5 +45,13 @@ fi
 
 cd "$INSTALL_DIR"
 print_line "已进入目录：$INSTALL_DIR"
-print_line "接下来将执行交互式安装脚本。"
-exec bash scripts/install.sh
+
+# curl | bash 场景下 stdin 是管道，install.sh 会自动走非交互模式；
+# 本地直接执行 bootstrap.sh 时保持交互。显式传 --yes 兜底。
+if [ -t 0 ]; then
+  print_line "接下来将执行交互式安装脚本。"
+  exec bash scripts/install.sh "$@"
+else
+  print_line "检测到管道环境，进入非交互一键安装模式。"
+  exec bash scripts/install.sh --yes "$@"
+fi

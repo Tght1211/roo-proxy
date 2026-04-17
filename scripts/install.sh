@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Roo 安装脚本：支持交互式（TTY）与一键非交互式（curl | bash / CI）两种模式。
+# 非交互默认：CONFIG_SOURCE=local / LOCAL_PORT=9999 / DASHBOARD_PORT=10000
+# 环境变量覆盖（脚本开头即可读）：
+#   ROO_CONFIG_SOURCE=local|gist
+#   ROO_LOCAL_PORT=9999
+#   ROO_DASHBOARD_PORT=10000
+#   ROO_GIST_ID / ROO_GITHUB_TOKEN
+#   ROO_SKIP_AUTOSTART=1   禁用 macOS LaunchAgent 自启
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,8 +16,51 @@ LOCAL_CONFIG_PATH="data/roo-config.json"
 GLOBAL_NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
 GLOBAL_NPM_BIN="${GLOBAL_NPM_PREFIX:+$GLOBAL_NPM_PREFIX/bin}"
 
-print_line() {
-  printf '%s\n' "$1"
+# ---- 解析参数 ----
+NONINTERACTIVE=0
+for arg in "$@"; do
+  case "$arg" in
+    -y|--yes|--noninteractive|--non-interactive)
+      NONINTERACTIVE=1
+      ;;
+    -h|--help)
+      cat <<'HELP'
+用法: bash scripts/install.sh [选项]
+
+选项:
+  -y, --yes    非交互式安装，使用默认值或环境变量
+  -h, --help   显示帮助
+
+环境变量（任一模式均可用）:
+  ROO_CONFIG_SOURCE      local (默认) 或 gist
+  ROO_LOCAL_PORT         默认 9999
+  ROO_DASHBOARD_PORT     默认 10000
+  ROO_GIST_ID            gist 模式必填
+  ROO_GITHUB_TOKEN       gist 模式必填
+  ROO_SKIP_AUTOSTART=1   跳过 macOS LaunchAgent 自启注册
+HELP
+      exit 0
+      ;;
+  esac
+done
+
+# stdin 不是 tty 时自动进入非交互模式（curl | bash 场景）
+if [ ! -t 0 ]; then
+  NONINTERACTIVE=1
+fi
+
+print_line() { printf '%s\n' "$1"; }
+
+prompt_default() {
+  # prompt_default VAR "提示文案" "默认值"
+  local __var="$1" __msg="$2" __default="$3" __input=""
+  if [ "$NONINTERACTIVE" = "1" ]; then
+    eval "$__var=\"\${${__var}:-$__default}\""
+    return
+  fi
+  printf '%s (默认 %s): ' "$__msg" "$__default"
+  read -r __input || __input=""
+  eval "$__var=\"\${__input:-$__default}\""
 }
 
 require_command() {
@@ -17,7 +68,6 @@ require_command() {
     print_line "[OK] 已检测到 $1"
     return 0
   fi
-
   print_line "[缺失] 未检测到 $1"
   return 1
 }
@@ -51,15 +101,13 @@ write_local_config() {
     print_line "检测到已有本地规则文件，已保留：$LOCAL_CONFIG_PATH"
     return 0
   fi
-
   mkdir -p "$(dirname "$config_path")"
   cat > "$config_path" <<'EOF'
 {
   "balance_strategy": "round-robin",
+  "default_route": { "action": "direct", "upstreams": [] },
   "upstreams": [],
-  "rules": [
-    "example.com"
-  ]
+  "rules": []
 }
 EOF
 }
@@ -69,18 +117,15 @@ ensure_port_free() {
   local label="$2"
   local listeners
   listeners="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
-
   if [ -n "$listeners" ]; then
     print_line ""
     print_line "[错误] $label $port 已被其他进程占用，Roo 无法安全启动。"
-    print_line "请先关闭占用该端口的进程，再重新运行安装脚本。"
-    print_line "占用详情："
-    print_line "$listeners"
+    print_line "占用详情：$listeners"
     print_line ""
-    print_line "常见原因："
-    print_line "- 你之前手动运行过 node server/index.js"
-    print_line "- 你之前启动过另一个 Roo 实例"
-    print_line "- 其他代理程序占用了同一端口"
+    print_line "解决办法二选一："
+    print_line "  1) 关闭占用该端口的进程后重跑本脚本"
+    print_line "  2) 用环境变量改端口再跑："
+    print_line "     ROO_LOCAL_PORT=9998 ROO_DASHBOARD_PORT=10001 bash scripts/install.sh --yes"
     exit 1
   fi
 }
@@ -88,33 +133,24 @@ ensure_port_free() {
 verify_roo_started() {
   local dashboard_port="$1"
   local retries=20
-
   while [ "$retries" -gt 0 ]; do
     if curl -fsS "http://127.0.0.1:${dashboard_port}/status" >/dev/null 2>&1; then
       return 0
     fi
-
     retries=$((retries - 1))
     sleep 1
   done
-
   print_line ""
   print_line "[错误] Roo 启动后未能在预期端口提供 dashboard 服务。"
-  print_line "这通常意味着："
-  print_line "- 选定端口被占用"
-  print_line "- pm2 中旧的 Roo 进程没有正确释放端口"
-  print_line "- Roo 进程启动后立即报错退出"
-  print_line ""
-  print_line "请先查看："
-  print_line "- pm2 list"
-  print_line "- pm2 logs roo --lines 50"
+  print_line "请执行： pm2 list 和 pm2 logs roo --lines 50 查看原因。"
   exit 1
 }
 
 print_line "========================================"
-print_line "欢迎使用 Roo 一键安装脚本"
+print_line "Roo 一键安装脚本 ($([ "$NONINTERACTIVE" = "1" ] && echo '非交互模式' || echo '交互模式'))"
 print_line "========================================"
 
+# ---- 环境检查 ----
 if ! require_command node; then
   print_line "请先安装 Node.js 18 或更高版本后再运行本脚本。"
   exit 1
@@ -130,16 +166,16 @@ if ! require_command python3; then
   exit 1
 fi
 
-if ! require_command pm2; then
-  print_line "检测到你尚未安装 pm2。"
-  printf '是否现在自动安装 pm2？(y/N): '
-  read -r INSTALL_PM2
-  if [ "$INSTALL_PM2" = "y" ] || [ "$INSTALL_PM2" = "Y" ]; then
-    npm install -g pm2
-  else
-    print_line "已取消安装。请先执行 npm install -g pm2 后重新运行本脚本。"
+if ! command -v pm2 >/dev/null 2>&1; then
+  print_line "未检测到 pm2，自动安装中..."
+  npm install -g pm2
+  if ! command -v pm2 >/dev/null 2>&1; then
+    print_line "[错误] pm2 自动安装失败，请手动执行：npm install -g pm2"
     exit 1
   fi
+  print_line "[OK] pm2 已安装"
+else
+  print_line "[OK] 已检测到 pm2"
 fi
 
 if ! require_command lsof; then
@@ -154,15 +190,17 @@ fi
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 if [ "$NODE_MAJOR" -lt 18 ]; then
-  print_line "当前 Node.js 版本过低，请升级到 18 或更高版本。"
+  print_line "当前 Node.js 版本过低（需 >= 18）。"
   exit 1
 fi
 
-print_line "开始安装项目依赖..."
-npm install --prefix "$ROOT_DIR"
+# ---- 安装依赖 ----
+print_line ""
+print_line "正在安装项目依赖..."
+npm install --prefix "$ROOT_DIR" --no-audit --no-fund
 
 print_line "正在安装 roo CLI 命令..."
-npm install -g "$ROOT_DIR"
+npm install -g "$ROOT_DIR" --no-audit --no-fund
 
 if [ ! -f "$EXAMPLE_ENV_FILE" ]; then
   print_line ".env.example 不存在，安装脚本无法继续。"
@@ -173,46 +211,55 @@ if [ ! -f "$ENV_FILE" ]; then
   cp "$EXAMPLE_ENV_FILE" "$ENV_FILE"
 fi
 
-print_line "现在开始初始化 Roo 配置。"
-print_line "推荐新手先使用 local 模式，先在本机跑通；以后再切到 gist 在线更新。"
-printf '请选择配置模式（local/gist，默认 local）: '
-read -r CONFIG_SOURCE
-CONFIG_SOURCE="${CONFIG_SOURCE:-local}"
+# ---- 配置收集 ----
+print_line ""
+print_line "正在初始化 Roo 配置..."
 
-set_env_value "CONFIG_SOURCE" "$CONFIG_SOURCE"
-set_env_value "LOCAL_CONFIG_PATH" "$LOCAL_CONFIG_PATH"
-
-printf '本地代理端口（默认 7890）: '
-read -r LOCAL_PORT
-LOCAL_PORT="${LOCAL_PORT:-7890}"
-set_env_value "LOCAL_PORT" "$LOCAL_PORT"
-
-printf 'Dashboard 端口（默认 7891）: '
-read -r DASHBOARD_PORT
-DASHBOARD_PORT="${DASHBOARD_PORT:-7891}"
-set_env_value "DASHBOARD_PORT" "$DASHBOARD_PORT"
-
-if [ "$LOCAL_PORT" = "$DASHBOARD_PORT" ]; then
-  print_line "本地代理端口和 Dashboard 端口不能相同，请重新运行安装脚本。"
+prompt_default CONFIG_SOURCE "配置模式 local/gist" "${ROO_CONFIG_SOURCE:-local}"
+if [ "$CONFIG_SOURCE" != "local" ] && [ "$CONFIG_SOURCE" != "gist" ]; then
+  print_line "[错误] 不支持的配置模式：$CONFIG_SOURCE（应为 local 或 gist）"
   exit 1
 fi
 
+prompt_default LOCAL_PORT "本地代理端口" "${ROO_LOCAL_PORT:-9999}"
+prompt_default DASHBOARD_PORT "Dashboard 端口" "${ROO_DASHBOARD_PORT:-10000}"
+
+if [ "$LOCAL_PORT" = "$DASHBOARD_PORT" ]; then
+  print_line "[错误] 本地代理端口与 Dashboard 端口不能相同。"
+  exit 1
+fi
+
+set_env_value "CONFIG_SOURCE" "$CONFIG_SOURCE"
+set_env_value "LOCAL_CONFIG_PATH" "$LOCAL_CONFIG_PATH"
+set_env_value "LOCAL_PORT" "$LOCAL_PORT"
+set_env_value "DASHBOARD_PORT" "$DASHBOARD_PORT"
+
 if [ "$CONFIG_SOURCE" = "gist" ]; then
-  printf 'GitHub Private Gist ID: '
-  read -r GIST_ID
-  printf 'GitHub Token: '
-  read -r GITHUB_TOKEN
+  if [ -z "${ROO_GIST_ID:-}" ]; then
+    prompt_default GIST_ID "GitHub Private Gist ID" ""
+  else
+    GIST_ID="$ROO_GIST_ID"
+  fi
+  if [ -z "${ROO_GITHUB_TOKEN:-}" ]; then
+    prompt_default GITHUB_TOKEN "GitHub Token" ""
+  else
+    GITHUB_TOKEN="$ROO_GITHUB_TOKEN"
+  fi
+  if [ -z "$GIST_ID" ] || [ -z "$GITHUB_TOKEN" ]; then
+    print_line "[警告] gist 模式但缺少 GIST_ID / GITHUB_TOKEN。请装完后在 .env 补齐，否则会自动回退到 local。"
+  fi
   set_env_value "GIST_ID" "$GIST_ID"
   set_env_value "GITHUB_TOKEN" "$GITHUB_TOKEN"
-  print_line "已写入 gist 模式配置。后续你可以用 roo add / roo upstream add 直接在线更新规则。"
+  print_line "已写入 gist 模式配置。"
 else
   set_env_value "GIST_ID" ""
   set_env_value "GITHUB_TOKEN" ""
   write_local_config
   print_line "已生成本地规则文件：$LOCAL_CONFIG_PATH"
-  print_line "默认已经写入一条示例规则 example.com，方便你立刻启动测试。"
 fi
 
+# ---- 启动服务 ----
+print_line ""
 print_line "正在清理旧的 pm2 Roo 进程..."
 pm2 delete roo >/dev/null 2>&1 || true
 
@@ -220,59 +267,44 @@ ensure_port_free "$LOCAL_PORT" "本地代理端口"
 ensure_port_free "$DASHBOARD_PORT" "Dashboard 端口"
 
 print_line "正在使用 pm2 启动 Roo 服务..."
-pm2 start "$ROOT_DIR/server/ecosystem.config.js"
+pm2 start "$ROOT_DIR/server/ecosystem.config.js" --silent
 verify_roo_started "$DASHBOARD_PORT"
+pm2 save >/dev/null 2>&1 || true
+print_line "[OK] Roo 已通过 pm2 启动。"
 
-print_line "正在尝试保存 pm2 开机自启配置..."
-if pm2 save >/dev/null 2>&1; then
-  print_line "pm2 save 已完成。"
-else
-  print_line "pm2 save 执行失败，可稍后手动执行。"
-fi
-
-if pm2 startup >/dev/null 2>&1; then
-  print_line "pm2 startup 已完成。"
-else
-  print_line "pm2 startup 执行失败（macOS 通常需要 sudo）。"
-  print_line "如果不想用 sudo，可改用无 sudo 的 LaunchAgent 方案（推荐 macOS 用户）："
-  print_line "  bash $ROOT_DIR/scripts/install-autostart.sh"
-  print_line "该脚本会在 ~/Library/LaunchAgents/ 下注册 Roo，登录后自动启动、崩溃自动拉起。"
-fi
-
-print_line "========================================"
-print_line "Roo 安装完成"
-print_line ""
-print_line "你现在可以这样开始使用："
-print_line "1. 查看状态：roo status"
-print_line "2. 查看完整配置：roo show"
-print_line "3. 添加规则：roo add openai.com"
-print_line "4. 添加 upstream：roo upstream add residential-01 socks5://user:pass@host:1080"
-print_line "5. 手动重载配置：roo reload"
-print_line "6. 打开面板：http://127.0.0.1:${DASHBOARD_PORT}"
-print_line ""
-print_line "浏览器代理设置："
-print_line "- 地址：127.0.0.1"
-print_line "- 端口：${LOCAL_PORT}"
-print_line ""
-if command -v roo >/dev/null 2>&1; then
-  print_line "roo 命令已安装成功，可直接使用。"
-else
-  print_line "警告：roo 命令已安装，但当前 shell 可能还没刷新 PATH。"
-  if [ -n "$GLOBAL_NPM_BIN" ]; then
-    print_line "请确认以下目录在你的 PATH 中："
-    print_line "- $GLOBAL_NPM_BIN"
-    print_line "如果刚安装完成，可执行：hash -r"
-    print_line "临时使用也可以直接执行：$GLOBAL_NPM_BIN/roo --help"
+# ---- 自启动（macOS 优先 LaunchAgent，无需 sudo） ----
+if [ "${ROO_SKIP_AUTOSTART:-0}" = "1" ]; then
+  print_line "跳过自启动配置（ROO_SKIP_AUTOSTART=1）。"
+elif [ "$(uname)" = "Darwin" ]; then
+  print_line "正在配置 macOS 登录自启（LaunchAgent，无需 sudo）..."
+  if bash "$ROOT_DIR/scripts/install-autostart.sh" >/dev/null 2>&1; then
+    print_line "[OK] 已注册 LaunchAgent，开机登录后 Roo 自动启动，崩溃 5 秒内自动拉起。"
   else
-    print_line "你也可以临时在项目目录中执行：node cli/index.js --help"
+    print_line "[警告] LaunchAgent 注册失败，稍后可手动执行：bash $ROOT_DIR/scripts/install-autostart.sh"
+  fi
+else
+  print_line "检测到非 macOS 系统，尝试使用 pm2 startup 注册开机自启（可能需要 sudo）..."
+  pm2 startup >/dev/null 2>&1 || print_line "[提示] pm2 startup 需要 sudo 才能生效，请按其输出手动执行。"
+fi
+
+# ---- 完成提示 ----
+print_line ""
+print_line "========================================"
+print_line "  ✅ Roo 安装完成！"
+print_line "========================================"
+print_line ""
+print_line "  Dashboard : http://127.0.0.1:${DASHBOARD_PORT}"
+print_line "  本地代理  : 127.0.0.1:${LOCAL_PORT}  (HTTP / HTTPS / SOCKS5 同端口)"
+print_line ""
+print_line "  常用命令  : roo status / roo show / roo logs --n=50"
+print_line "  卸载自启  : bash $ROOT_DIR/scripts/uninstall-autostart.sh"
+print_line ""
+
+if ! command -v roo >/dev/null 2>&1; then
+  print_line "  ⚠️  当前 shell 未刷新 PATH；执行 hash -r 或重新开终端即可使用 roo 命令。"
+  if [ -n "$GLOBAL_NPM_BIN" ]; then
+    print_line "     临时可用：$GLOBAL_NPM_BIN/roo --help"
   fi
 fi
-print_line ""
-print_line "重要：请确认你的浏览器 / 系统代理端口与上面显示的端口完全一致。"
-print_line "如果你访问 ping0.cc 看到的还是旧出口，大概率是浏览器没有连到 Roo 当前监听端口。"
-print_line ""
-print_line "如果你是第一次使用，推荐接下来执行："
-print_line "- roo add openai.com"
-print_line "- roo upstream add residential-01 socks5://user:pass@host:1080"
-print_line "- roo show"
+
 print_line "========================================"
