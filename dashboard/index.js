@@ -533,6 +533,26 @@ function renderHtml() {
     .page.active{display:block}
     @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 
+    /* ---- Sub-nav (CONFIG page anchors) ---- */
+    .subnav{
+      position:sticky;top:0;z-index:5;
+      display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+      padding:10px 14px;margin:-22px -14px 18px;
+      background:rgba(7,9,15,.92);border-bottom:1px solid var(--border);
+      backdrop-filter:blur(8px);
+    }
+    .subnav-item{
+      padding:5px 16px;font-size:11.5px;font-weight:700;color:var(--text-2);
+      letter-spacing:.08em;font-family:var(--mono);cursor:pointer;
+      border:1px solid var(--border);background:var(--panel-2);
+      transition:all .15s;text-decoration:none;
+      clip-path:polygon(5px 0,100% 0,calc(100% - 5px) 100%,0 100%);
+    }
+    .subnav-item:hover{color:var(--cyan);border-color:var(--cyan-dim);background:var(--cyan-soft)}
+    .subnav-item.active{color:var(--magenta);border-color:var(--magenta-dim);background:var(--magenta-soft)}
+    html{scroll-behavior:smooth}
+    #page-config > div[id^="anchor-"]{scroll-margin-top:80px;height:1px}
+
     /* ---- Section head ---- */
     .section-head{
       display:flex;align-items:center;gap:10px;margin:22px 0 12px;
@@ -829,6 +849,26 @@ function renderHtml() {
     }
     .expiry-row strong{color:var(--text)}
 
+    /* ---- Relay (env proxy) card ---- */
+    .relay-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+    .relay-cell{
+      display:flex;align-items:stretch;gap:0;
+      border:1px solid var(--border);border-radius:var(--radius-lg);
+      background:var(--panel-2);transition:border-color .15s;overflow:hidden;
+    }
+    .relay-cell:focus-within{border-color:var(--cyan);box-shadow:0 0 0 2px var(--cyan-soft)}
+    .relay-label{
+      display:flex;align-items:center;padding:0 12px;min-width:58px;justify-content:center;
+      background:var(--panel);border-right:1px solid var(--border);
+      font-size:10px;font-weight:700;color:var(--cyan);letter-spacing:.14em;font-family:var(--mono);
+    }
+    .relay-input{
+      flex:1;border:none;background:transparent;padding:8px 10px;
+      font-size:12px;font-family:var(--mono);min-width:0;
+    }
+    .relay-input:focus{box-shadow:none;border:none}
+    @media (max-width:780px){.relay-grid{grid-template-columns:1fr}}
+
     /* ---- System proxy card ---- */
     .sys-endpoints{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 14px}
     .sys-row{
@@ -919,9 +959,8 @@ function renderHtml() {
     </div>
     <div class="nav-tabs">
       <div class="nav-tab active" data-page="overview"><span class="tab-num">01</span>CONSOLE</div>
-      <div class="nav-tab" data-page="chain"><span class="tab-num">02</span>CHAIN</div>
-      <div class="nav-tab" data-page="rules"><span class="tab-num">03</span>RULES</div>
-      <div class="nav-tab" data-page="logs"><span class="tab-num">04</span>LOGS</div>
+      <div class="nav-tab" data-page="config"><span class="tab-num">02</span>CONFIG</div>
+      <div class="nav-tab" data-page="logs"><span class="tab-num">03</span>LOGS</div>
     </div>
     <div class="topbar-right">
       <span class="topbar-status" id="sidebarStatus"><span class="pulse"></span>ONLINE</span>
@@ -1013,9 +1052,19 @@ function renderHtml() {
       </div>
       </div><!-- /page-overview -->
 
-      <!-- ========== PAGE: CHAIN (链式编排) ========== -->
-      <div class="page" id="page-chain">
+      <!-- ========== PAGE: CONFIG (链式编排 + 分流规则) ========== -->
+      <div class="page" id="page-config">
 
+      <div class="subnav">
+        <a class="subnav-item" data-anchor="anchor-mode">流量模式</a>
+        <a class="subnav-item" data-anchor="anchor-strategy">路由策略</a>
+        <a class="subnav-item" data-anchor="anchor-sysproxy">系统代理</a>
+        <a class="subnav-item" data-anchor="anchor-relay">前置跳板</a>
+        <a class="subnav-item" data-anchor="anchor-nodes">出口节点池</a>
+        <a class="subnav-item" data-anchor="anchor-rules">分流规则</a>
+      </div>
+
+      <div id="anchor-strategy"></div>
       <div class="card">
         <div class="card-h">
           <div class="card-title"><span class="dot"></span>路由策略</div>
@@ -1048,6 +1097,7 @@ function renderHtml() {
         </div>
       </div>
 
+        <div id="anchor-sysproxy"></div>
         <div class="card">
           <div class="card-h">
             <div class="card-title"><span class="dot"></span>系统代理接管（macOS）</div>
@@ -1068,37 +1118,58 @@ function renderHtml() {
           </div>
         </div>
 
+        <div id="anchor-relay"></div>
         <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>Roo 前置跳板（环境代理）</div></div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">推荐在这里填写你现有的本地代理端口。所有出口节点默认都会先经过这里，再走住宅 IP / 落地机出口；如果前置链路故障，Roo 会自动切到其他可用出口。</div>
-          <div class="form-group"><label class="form-label">HTTP_PROXY</label><input class="form-control" id="envHttpProxy" placeholder="如: http://127.0.0.1:6578" /></div>
-          <div class="form-group"><label class="form-label">HTTPS_PROXY</label><input class="form-control" id="envHttpsProxy" placeholder="如: http://127.0.0.1:6578" /></div>
-          <div class="form-group"><label class="form-label">ALL_PROXY</label><input class="form-control" id="envAllProxy" placeholder="如: socks5://127.0.0.1:6578" /></div>
-          <div class="form-group"><label class="form-label">NO_PROXY</label><input class="form-control" id="envNoProxy" placeholder="如: 127.0.0.1,localhost,.local" /></div>
-          <div style="display:flex;gap:8px;justify-content:flex-end">
-            <button class="btn btn-ghost" id="resetEnvBtn">重置前置跳板</button>
-            <button class="btn btn-primary" id="applyEnvBtn">保存前置跳板</button>
+          <div class="card-h">
+            <div class="card-title"><span class="dot"></span>Roo 前置跳板（环境代理）</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" id="envQuickSameBtn" title="把 HTTP_PROXY 复制到其它三个字段">⇔ 一键同步</button>
+              <button class="btn btn-ghost btn-sm" id="envClearAllBtn">清空全部</button>
+            </div>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-3);margin-bottom:12px;line-height:1.6">推荐填你现有的本地代理（如 Clash 端口）。所有出口节点默认都会先经过这里，再走住宅 IP / 落地机出口。</div>
+          <div class="relay-grid">
+            <div class="relay-cell">
+              <span class="relay-label">HTTP</span>
+              <input class="form-control relay-input" id="envHttpProxy" placeholder="http://127.0.0.1:6578" />
+            </div>
+            <div class="relay-cell">
+              <span class="relay-label">HTTPS</span>
+              <input class="form-control relay-input" id="envHttpsProxy" placeholder="http://127.0.0.1:6578" />
+            </div>
+            <div class="relay-cell">
+              <span class="relay-label">ALL</span>
+              <input class="form-control relay-input" id="envAllProxy" placeholder="socks5://127.0.0.1:6578" />
+            </div>
+            <div class="relay-cell">
+              <span class="relay-label">NO</span>
+              <input class="form-control relay-input" id="envNoProxy" placeholder="localhost,127.0.0.1,.local" />
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+            <button class="btn btn-ghost btn-sm" id="resetEnvBtn">重置</button>
+            <button class="btn btn-primary btn-sm" id="applyEnvBtn">保存前置跳板</button>
           </div>
         </div>
 
+        <div id="anchor-nodes"></div>
         <div class="card">
           <div class="sec-h">
             <div class="sec-t"><span class="dot"></span>出口节点池（落地机）</div>
-            <button class="btn btn-primary btn-sm" id="addUpstreamBtn">+ 添加出口节点</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" id="latencyTestAllBtn">⚡ 全部测延时</button>
+              <button class="btn btn-primary btn-sm" id="addUpstreamBtn">+ 添加出口节点</button>
+            </div>
           </div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">出口节点 = 最终对外出站的住宅 IP / 落地机。默认复用上方「前置跳板」为中转。仅当某个出口需要走不同中转时，在编辑弹窗里展开「高级设置：单独 via」单独指定；名字旁的 <span class="badge badge-purple">via</span> 徽章代表该出口覆盖了全局前置。</div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">出口节点 = 最终对外出站的住宅 IP / 落地机。默认复用上方「前置跳板」为中转。<strong style="color:var(--cyan)">权重</strong>：加权策略下数字越大被选概率越大（如 A=1、B=3 → B 被选概率是 A 的 3 倍）；轮询/随机策略下权重字段被忽略。</div>
           <table id="upstreamTable" style="display:none">
-            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>权重</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>权重</th><th>延时</th><th>状态</th><th>操作</th></tr></thead>
             <tbody id="upstreamBody"></tbody>
           </table>
           <div class="empty-tip" id="upstreamEmpty">暂无出口节点，点击「添加」新建</div>
         </div>
 
-        </div><!-- /page-chain -->
-
-        <!-- ========== PAGE: RULES (分流规则) ========== -->
-        <div class="page" id="page-rules">
-
+        <div id="anchor-mode"></div>
         <div class="card">
           <div class="card-h"><div class="card-title"><span class="dot"></span>TRAFFIC MODE · 流量模式</div></div>
           <div class="mode-switch">
@@ -1118,6 +1189,7 @@ function renderHtml() {
           <div class="mode-hint" id="modeHint"></div>
         </div>
 
+        <div id="anchor-rules"></div>
         <div class="card" id="rulesCard">
           <div class="sec-h">
             <div class="sec-t"><span class="dot"></span>分流规则</div>
@@ -1175,7 +1247,7 @@ function renderHtml() {
           </div>
         </div>
 
-      </div><!-- /page-rules -->
+      </div><!-- /page-config -->
 
       <!-- ========== PAGE: LOGS (访问日志) ========== -->
       <div class="page" id="page-logs">
@@ -1325,6 +1397,7 @@ let overviewRefreshToken = 0;
 let lastNetDiagRenderKey = null;
 let upViaExpanded = false;
 const ruleFilter = { search: '', type: '', action: '', upstream: '', group: '', enabled: '', page: 1, pageSize: 20 };
+const upstreamLatency = {}; // { [name]: { pending, ok, latencyMs, ip, meta, error } }
 
 function updateTopbarStatus(running) {
   const el = document.getElementById('sidebarStatus');
@@ -1348,6 +1421,18 @@ document.querySelectorAll('.nav-tab').forEach((tab) => {
     const target = document.getElementById('page-' + pageId);
     if (target) target.classList.add('active');
     if (pageId === 'logs') loadLogs();
+  });
+});
+
+// ---- CONFIG sub-anchor nav (smooth scroll + active tracking) ----
+document.querySelectorAll('.subnav-item').forEach((item) => {
+  item.addEventListener('click', (e) => {
+    e.preventDefault();
+    const anchorId = item.dataset.anchor;
+    const el = document.getElementById(anchorId);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelectorAll('.subnav-item').forEach(s => s.classList.remove('active'));
+    item.classList.add('active');
   });
 });
 
@@ -1641,10 +1726,43 @@ function renderNetDiag(netDiag) {
   const failedChecks = checks.filter((item) => !item.ok).slice(0, 3);
   const relay = netDiag.relayProbe || { configured: false };
   const relayDown = relay.configured && relay.ok === false;
-  const currentEgress = netDiag.rooProbeUpstream
-    ? ('当前出口节点：' + netDiag.rooProbeUpstream)
-    : '当前出口：经 Roo';
-  const currentEgressValue = getDiagValue(netDiag.rooProxyMeta, netDiag.rooProxyIp);
+
+  // 出口节点块：明确区分「选中的节点」和「该节点实际出的 IP」
+  let egressBlock;
+  const meta = netDiag.rooProxyMeta;
+  const ipLine = meta && meta.ip ? formatIpMeta(meta) : (netDiag.rooProxyIp || '暂无数据');
+  if (netDiag.rooProbeMode === 'upstream-probe' && netDiag.rooProbeUpstream) {
+    // 节点探测成功：IP 就是节点真实出口
+    egressBlock =
+      '<div class="diag-block">'
+      + '<div class="diag-caption" style="display:flex;justify-content:space-between;align-items:center">'
+        + '<span>选中节点</span>'
+        + '<span class="badge badge-green"><span class="badge-dot"></span>' + esc(netDiag.rooProbeUpstream) + '</span>'
+      + '</div>'
+      + '<div class="diag-text" style="margin-top:4px;font-size:11.5px;color:var(--text-3)">节点真实出口 IP（地区 / ISP）：</div>'
+      + '<div class="diag-text" style="color:var(--cyan)">' + esc(ipLine) + '</div>'
+      + '</div>';
+  } else if (netDiag.rooProbeMode === 'upstream-probe-failed' && netDiag.rooProbeUpstream) {
+    // 节点探测失败：下面的 IP 是 fallback（本机直连 / 前置），不是该节点的
+    egressBlock =
+      '<div class="diag-block bad">'
+      + '<div class="diag-caption" style="display:flex;justify-content:space-between;align-items:center">'
+        + '<span>选中节点</span>'
+        + '<span class="badge badge-red"><span class="badge-dot"></span>' + esc(netDiag.rooProbeUpstream) + ' · 异常</span>'
+      + '</div>'
+      + '<div class="diag-text" style="margin-top:4px;font-size:11.5px;color:var(--yellow)">⚠ 该节点探测失败，下方 IP <strong>不是</strong>该节点的真实出口，而是 Roo 本机/前置 fallback：</div>'
+      + '<div class="diag-text" style="color:var(--text-3)">' + esc(ipLine) + '</div>'
+      + '</div>';
+  } else {
+    // 无选中节点（direct 模式 / 全局 / 未启用出口）：展示 Roo 本机出口
+    const label = netDiag.rooProbeMode === 'roo-route' ? 'Roo 代理链路实际出口' : '当前出口';
+    egressBlock =
+      '<div class="diag-block">'
+      + '<div class="diag-caption">' + esc(label) + '</div>'
+      + '<div class="diag-text" style="margin-top:2px;font-size:11.5px;color:var(--text-3)">经 Roo 出口测得的 IP（地区 / ISP）：</div>'
+      + '<div class="diag-text" style="color:var(--cyan)">' + esc(ipLine) + '</div>'
+      + '</div>';
+  }
 
   return [
     '<div class="section-stack">',
@@ -1653,10 +1771,7 @@ function renderNetDiag(netDiag) {
           '<div class="diag-title">当前路径</div>',
           '<div class="diag-list">',
             renderRelayBlock(netDiag),
-            '<div class="diag-block">',
-              '<div class="diag-caption">' + esc(currentEgress) + '</div>',
-              '<div class="diag-text">' + esc(currentEgressValue) + '</div>',
-            '</div>',
+            egressBlock,
           '</div>',
         '</div>',
         '<div class="diag-panel">',
@@ -2053,13 +2168,28 @@ function renderConfig() {
     const vendorTag = u.vendorUrl
       ? ' <a href="' + esc(u.vendorUrl) + '" target="_blank" rel="noopener" class="badge badge-blue" title="前往续费：' + esc(u.vendorUrl) + '">续费 ↗</a>'
       : '';
+    const latency = upstreamLatency[u.name];
+    let latencyCell;
+    if (!latency) {
+      latencyCell = '<span style="color:var(--text-3);font-size:11px">—</span>';
+    } else if (latency.pending) {
+      latencyCell = '<span style="color:var(--cyan);font-size:11px;font-family:var(--mono)">测试中...</span>';
+    } else if (latency.ok) {
+      const ms = latency.latencyMs;
+      const color = ms < 500 ? 'var(--green)' : ms < 1500 ? 'var(--yellow)' : 'var(--red)';
+      latencyCell = '<span style="color:' + color + ';font-family:var(--mono);font-weight:700" title="出口 IP: ' + esc((latency.meta && latency.meta.ip) || latency.ip || '-') + '">' + ms + ' ms</span>';
+    } else {
+      latencyCell = '<span style="color:var(--red);font-size:11px;font-family:var(--mono)" title="' + esc(latency.error || '失败') + '">失败</span>';
+    }
     tr.innerHTML =
       '<td><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><strong>' + esc(u.name) + '</strong>' + viaTag + expTag + noteTag + vendorTag + '</div></td>' +
       '<td><span class="badge badge-blue">' + esc(proto) + '</span></td>' +
       '<td><span class="url-text" title="' + esc(maskUrl(u.url)) + '">' + esc(maskUrl(u.url)) + '</span></td>' +
-      '<td>' + u.weight + '</td>' +
+      '<td title="加权策略下数字越大被选概率越大；轮询/随机策略下被忽略">' + u.weight + '</td>' +
+      '<td>' + latencyCell + '</td>' +
       '<td><span class="badge ' + (u.enabled !== false ? 'badge-green' : 'badge-gray') + '"><span class="badge-dot"></span>' + (u.enabled !== false ? '启用' : '禁用') + '</span></td>' +
       '<td style="white-space:nowrap">' +
+        '<button class="btn btn-ghost btn-sm" onclick="testUpstreamLatency(&quot;' + esc(u.name) + '&quot;)">⚡ 测</button> ' +
         '<button class="btn btn-ghost btn-sm" onclick="editUpstream(' + i + ')">编辑</button> ' +
         '<button class="btn btn-danger btn-sm" onclick="delUpstream(' + i + ')">删除</button>' +
       '</td>';
@@ -2244,6 +2374,23 @@ document.getElementById('applyEnvBtn').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('envQuickSameBtn').addEventListener('click', () => {
+  const v = document.getElementById('envHttpProxy').value.trim();
+  if (!v) { toast('先在 HTTP 行填一个代理地址，再点一键同步', 'error'); return; }
+  document.getElementById('envHttpsProxy').value = v;
+  // ALL_PROXY 习惯用 socks5://，如果 HTTP 是 http:// 开头，智能替换
+  const allVal = document.getElementById('envAllProxy').value.trim();
+  if (!allVal) {
+    document.getElementById('envAllProxy').value = v.replace(/^https?:\\/\\//, 'socks5://');
+  }
+  toast('已把 HTTP 同步到 HTTPS / ALL');
+});
+
+document.getElementById('envClearAllBtn').addEventListener('click', () => {
+  ['envHttpProxy','envHttpsProxy','envAllProxy','envNoProxy'].forEach(id => document.getElementById(id).value = '');
+  toast('已清空全部字段（未保存，点「保存前置跳板」才生效）');
+});
+
 document.getElementById('resetEnvBtn').addEventListener('click', async () => {
   try {
     envSettings = await api('/env-settings');
@@ -2353,6 +2500,46 @@ window.editUpstream = i => {
   document.getElementById('upEnabled').checked = u.enabled !== false;
   document.getElementById('upstreamModal').classList.add('open');
 };
+
+window.testUpstreamLatency = async (name) => {
+  if (!name) return;
+  upstreamLatency[name] = { pending: true };
+  renderConfig();
+  try {
+    const r = await api('/upstream-latency?name=' + encodeURIComponent(name));
+    const hit = (r.results || []).find(x => x.name === name);
+    if (hit) {
+      upstreamLatency[name] = { pending: false, ok: hit.ok, latencyMs: hit.latencyMs, ip: hit.ip, meta: hit.meta, error: hit.error };
+    } else {
+      upstreamLatency[name] = { pending: false, ok: false, error: '节点未启用或已删除' };
+    }
+  } catch (e) {
+    upstreamLatency[name] = { pending: false, ok: false, error: e.message };
+  }
+  renderConfig();
+};
+
+document.getElementById('latencyTestAllBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('latencyTestAllBtn');
+  const names = (cfg?.upstreams || []).filter(u => u.enabled !== false).map(u => u.name);
+  if (!names.length) { toast('没有启用中的出口节点可测', 'error'); return; }
+  names.forEach(n => upstreamLatency[n] = { pending: true });
+  renderConfig();
+  btn.disabled = true; btn.textContent = '测试中...';
+  try {
+    const r = await api('/upstream-latency');
+    (r.results || []).forEach((hit) => {
+      upstreamLatency[hit.name] = { pending: false, ok: hit.ok, latencyMs: hit.latencyMs, ip: hit.ip, meta: hit.meta, error: hit.error };
+    });
+    toast('延时测试完成');
+  } catch (e) {
+    names.forEach(n => upstreamLatency[n] = { pending: false, ok: false, error: e.message });
+    toast('延时测试失败：' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ 全部测延时';
+    renderConfig();
+  }
+});
 
 window.delUpstream = i => {
   if (!confirm('确认删除该出口节点？相关规则的引用也将清除。')) return;
@@ -2834,6 +3021,32 @@ function createDashboard(options = {}) {
       res.json(diagnostics);
     } catch (error) {
       res.status(500).json({ message: error.message || '获取网络诊断失败' });
+    }
+  });
+
+  app.get('/upstream-latency', async (req, res) => {
+    try {
+      const name = String(req.query.name || '').trim();
+      const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
+      const enabled = balancer && typeof balancer.getEnabledUpstreams === 'function'
+        ? balancer.getEnabledUpstreams()
+        : [];
+      const targets = name ? enabled.filter((u) => u.name === name) : enabled;
+      const results = await Promise.all(targets.map(async (u) => {
+        const t0 = Date.now();
+        const probe = await probeUpstreamConnectivity(u, chainManager, envProxy);
+        return {
+          name: u.name,
+          ok: probe.ok,
+          latencyMs: Date.now() - t0,
+          ip: probe.ip,
+          meta: probe.meta,
+          error: probe.error,
+        };
+      }));
+      res.json({ results });
+    } catch (error) {
+      res.status(500).json({ message: error.message || '延时测试失败' });
     }
   });
 
