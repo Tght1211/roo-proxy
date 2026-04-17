@@ -266,8 +266,18 @@ pm2 delete roo >/dev/null 2>&1 || true
 ensure_port_free "$LOCAL_PORT" "本地代理端口"
 ensure_port_free "$DASHBOARD_PORT" "Dashboard 端口"
 
+# 如果用户 shell 里 export 了 ALL_PROXY=socks5://127.0.0.1:$LOCAL_PORT 之类（把 Roo 当系统代理），
+# 这些会被 pm2 继承到 Roo 子进程，导致 Roo 自循环。启动前临时清掉指向自身端口的代理环境变量。
+for __pv in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+  __val="$(eval echo "\${$__pv:-}")"
+  if [ -n "$__val" ] && printf '%s' "$__val" | grep -qE "://(127\.0\.0\.1|localhost):${LOCAL_PORT}(/|$)"; then
+    print_line "[清理] 临时清除自循环代理变量 $__pv=$__val"
+    unset "$__pv"
+  fi
+done
+
 print_line "正在使用 pm2 启动 Roo 服务..."
-pm2 start "$ROOT_DIR/server/ecosystem.config.js" --silent
+pm2 start "$ROOT_DIR/server/ecosystem.config.js" --silent --update-env
 verify_roo_started "$DASHBOARD_PORT"
 pm2 save >/dev/null 2>&1 || true
 print_line "[OK] Roo 已通过 pm2 启动。"

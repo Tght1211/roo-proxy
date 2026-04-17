@@ -51,9 +51,29 @@ function ensureNoRelayLoop(settings) {
     return;
   }
 
+  // 常见场景：用户把 Roo 当系统代理后，shell 里 export 了 ALL_PROXY=socks5://127.0.0.1:LOCAL_PORT
+  // 这会让 Roo 进程继承这个变量导致"自指向自己"。
+  // 老行为：抛错阻止启动。新行为：自动清除指向自己端口的变量，让服务能正常起来。
   const port = conflict.localPort || settings.localPort;
-  const proxyUrl = conflict.proxyUrl;
-  throw new Error(`检测到前置代理端口冲突：LOCAL_PORT=${port} 与环境代理 ${proxyUrl} 指向同一监听端口。请修改 LOCAL_PORT 或 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY，避免自循环代理。`);
+  const selfHostPattern = /:\/\/(127\.0\.0\.1|localhost|\[::1\]|::1)(:|\/|$)/i;
+  const targetPort = `:${port}`;
+  const cleared = [];
+  for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
+    const value = process.env[key];
+    if (value && selfHostPattern.test(value) && value.includes(targetPort)) {
+      cleared.push(`${key}=${value}`);
+      delete process.env[key];
+    }
+  }
+
+  if (cleared.length) {
+    console.warn(`[roo] 已自动清除指向 Roo 自身（127.0.0.1:${port}）的代理环境变量，避免自循环：${cleared.join(', ')}`);
+    console.warn('[roo] 如果需要 Roo 使用环境代理作为前置跳板，请在 .env 或 Dashboard 中配置指向其他端口的代理。');
+    return;
+  }
+
+  // 极端情况：loop 检测命中但没有任何 env 被清掉（理论不应发生）
+  throw new Error(`检测到前置代理端口冲突：LOCAL_PORT=${port} 与环境代理 ${conflict.proxyUrl} 指向同一监听端口。请修改 LOCAL_PORT 或 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY，避免自循环代理。`);
 }
 
 async function detectRunningRoo(settings) {
