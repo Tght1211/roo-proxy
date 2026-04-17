@@ -1836,17 +1836,20 @@ function envDirty() {
 
 function updateEnvApplyState() {
   const btn = document.getElementById('applyEnvBtn');
-  if (!btn) return;
   const hint = document.getElementById('envUnsavedHint');
-  if (envDirty()) {
-    btn.classList.add('has-changes');
-    btn.textContent = '✓ 保存前置跳板';
-    if (hint) hint.style.display = '';
-  } else {
-    btn.classList.remove('has-changes');
-    btn.textContent = '保存前置跳板';
-    if (hint) hint.style.display = 'none';
+  if (btn) {
+    if (envDirty()) {
+      btn.classList.add('has-changes');
+      btn.textContent = '✓ 保存前置跳板';
+      if (hint) hint.style.display = '';
+    } else {
+      btn.classList.remove('has-changes');
+      btn.textContent = '保存前置跳板';
+      if (hint) hint.style.display = 'none';
+    }
   }
+  // 同步刷新底部 APPLY 条（env 改动也纳入统一提示）
+  if (typeof updateApplyBar === 'function') updateApplyBar();
 }
 
 function describeSysProxyBadge(status) {
@@ -2134,13 +2137,17 @@ function updateApplyBar() {
   const btn = document.getElementById('applyConfigBtn');
   if (!bar || !text || !btn) return;
   const onConfigPage = document.querySelector('.nav-tab.active')?.dataset.page === 'config';
-  const { dirty, parts } = computeConfigDiff();
-  // 只在 CONFIG 页 + 有未保存改动时才显示 APPLY 条
-  if (onConfigPage && dirty) {
+  const { dirty: cfgDirty, parts } = computeConfigDiff();
+  const envChanged = envDirty();
+  const allParts = [...parts];
+  if (envChanged) allParts.push('前置跳板');
+  const anyDirty = cfgDirty || envChanged;
+  // 只在 CONFIG 页 + 有未保存改动（cfg 或 env）时才显示 APPLY 条
+  if (onConfigPage && anyDirty) {
     bar.style.display = '';
     bar.classList.add('dirty');
     btn.classList.add('has-changes');
-    text.innerHTML = '<span class="unsaved-badge">UNSAVED</span>待保存：<strong>' + esc(parts.join(' · ')) + '</strong> — 点 APPLY 生效并热重载。';
+    text.innerHTML = '<span class="unsaved-badge">UNSAVED</span>待保存：<strong>' + esc(allParts.join(' · ')) + '</strong> — 点 APPLY 生效并热重载。';
   } else {
     bar.style.display = 'none';
     bar.classList.remove('dirty');
@@ -2839,15 +2846,36 @@ document.getElementById('applyConfigBtn').addEventListener('click', async () => 
   btn.disabled = true;
   btn.textContent = '保存中...';
   btn.classList.remove('has-changes');
+  const cfgChanged = computeConfigDiff().dirty;
+  const envChanged = envDirty();
+  const savedParts = [];
   try {
-    const result = await api('/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg)
-    });
-    originalCfg = JSON.parse(JSON.stringify(result.config || cfg));
-    cfg = JSON.parse(JSON.stringify(originalCfg));
+    // 1) 保存主 config（如果有改动）
+    if (cfgChanged) {
+      const result = await api('/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+      originalCfg = JSON.parse(JSON.stringify(result.config || cfg));
+      cfg = JSON.parse(JSON.stringify(originalCfg));
+      savedParts.push('配置');
+    }
+    // 2) 保存前置跳板 env（如果有改动）
+    if (envChanged) {
+      envSettings = await api('/env-settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          HTTP_PROXY: document.getElementById('envHttpProxy').value.trim(),
+          HTTPS_PROXY: document.getElementById('envHttpsProxy').value.trim(),
+          ALL_PROXY: document.getElementById('envAllProxy').value.trim(),
+          NO_PROXY: document.getElementById('envNoProxy').value.trim(),
+        }),
+      });
+      savedParts.push('前置跳板');
+    }
     renderConfig();
-    toast('配置已保存并应用！');
+    renderEnvSettings();
+    toast(savedParts.length ? (savedParts.join(' + ') + ' 已保存并应用！') : '没有待保存的改动');
   } catch (e) {
     toast('保存失败：' + e.message, 'error');
   } finally {
@@ -2919,9 +2947,11 @@ document.getElementById('configImportInput').addEventListener('change', async (e
 
 document.getElementById('resetConfigBtn').addEventListener('click', () => {
   if (!originalCfg) return;
-  if (!confirm('确认重置为上次保存的配置？')) return;
+  if (!confirm('确认重置为上次保存的配置？（包含前置跳板）')) return;
   cfg = JSON.parse(JSON.stringify(originalCfg));
   renderConfig();
+  // 前置跳板也一起回到上次生效值
+  renderEnvSettings();
   toast('已重置为上次保存的配置');
 });
 
