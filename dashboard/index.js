@@ -1792,7 +1792,7 @@ document.getElementById('upSaveBtn').addEventListener('click', () => {
   const expiresAt = dateInputToIso(document.getElementById('upExpiresAt').value);
   const vendorUrl = document.getElementById('upVendorUrl').value.trim() || null;
   if (!name || !url) { toast('名称和 URL 不能为空', 'error'); return; }
-  if (vendorUrl && !/^https?:\/\//i.test(vendorUrl)) {
+  if (vendorUrl && !/^https?:\\/\\//i.test(vendorUrl)) {
     toast('购买官网必须以 http:// 或 https:// 开头', 'error');
     return;
   }
