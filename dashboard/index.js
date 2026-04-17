@@ -1146,7 +1146,8 @@ function renderHtml() {
               <input class="form-control relay-input" id="envNoProxy" placeholder="localhost,127.0.0.1,.local" />
             </div>
           </div>
-          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+          <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px;flex-wrap:wrap">
+            <span id="envUnsavedHint" class="apply-bar-text" style="display:none;flex:none;margin-right:auto"><span class="unsaved-badge">UNSAVED</span><strong>前置跳板未保存</strong> — 点「保存前置跳板」生效。</span>
             <button class="btn btn-ghost btn-sm" id="resetEnvBtn">重置</button>
             <button class="btn btn-primary btn-sm" id="applyEnvBtn">保存前置跳板</button>
           </div>
@@ -1814,6 +1815,36 @@ function renderEnvSettings() {
   document.getElementById('envHttpsProxy').value = current.HTTPS_PROXY || '';
   document.getElementById('envAllProxy').value = current.ALL_PROXY || '';
   document.getElementById('envNoProxy').value = current.NO_PROXY || '';
+  updateEnvApplyState();
+}
+
+function envDirty() {
+  const eff = envSettings?.effective || {};
+  const cur = {
+    HTTP_PROXY: (document.getElementById('envHttpProxy')?.value || '').trim(),
+    HTTPS_PROXY: (document.getElementById('envHttpsProxy')?.value || '').trim(),
+    ALL_PROXY: (document.getElementById('envAllProxy')?.value || '').trim(),
+    NO_PROXY: (document.getElementById('envNoProxy')?.value || '').trim(),
+  };
+  return (eff.HTTP_PROXY || '') !== cur.HTTP_PROXY
+    || (eff.HTTPS_PROXY || '') !== cur.HTTPS_PROXY
+    || (eff.ALL_PROXY || '') !== cur.ALL_PROXY
+    || (eff.NO_PROXY || '') !== cur.NO_PROXY;
+}
+
+function updateEnvApplyState() {
+  const btn = document.getElementById('applyEnvBtn');
+  if (!btn) return;
+  const hint = document.getElementById('envUnsavedHint');
+  if (envDirty()) {
+    btn.classList.add('has-changes');
+    btn.textContent = '✓ 保存前置跳板';
+    if (hint) hint.style.display = '';
+  } else {
+    btn.classList.remove('has-changes');
+    btn.textContent = '保存前置跳板';
+    if (hint) hint.style.display = 'none';
+  }
 }
 
 function describeSysProxyBadge(status) {
@@ -2383,12 +2414,20 @@ document.getElementById('envQuickSameBtn').addEventListener('click', () => {
   if (!allVal) {
     document.getElementById('envAllProxy').value = v.replace(/^https?:\\/\\//, 'socks5://');
   }
+  updateEnvApplyState();
   toast('已把 HTTP 同步到 HTTPS / ALL');
 });
 
 document.getElementById('envClearAllBtn').addEventListener('click', () => {
   ['envHttpProxy','envHttpsProxy','envAllProxy','envNoProxy'].forEach(id => document.getElementById(id).value = '');
+  updateEnvApplyState();
   toast('已清空全部字段（未保存，点「保存前置跳板」才生效）');
+});
+
+// 4 个输入框改动实时触发 UNSAVED 扫光
+['envHttpProxy','envHttpsProxy','envAllProxy','envNoProxy'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', updateEnvApplyState);
 });
 
 document.getElementById('resetEnvBtn').addEventListener('click', async () => {
