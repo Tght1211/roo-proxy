@@ -1271,7 +1271,7 @@ function renderHtml() {
 
     </div>
 
-    <div class="apply-bar">
+    <div class="apply-bar" style="display:none">
       <span class="apply-bar-text">// 修改后点击 APPLY 保存到本地配置并热重载</span>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost" id="resetConfigBtn">RESET</button>
@@ -1422,6 +1422,8 @@ document.querySelectorAll('.nav-tab').forEach((tab) => {
     const target = document.getElementById('page-' + pageId);
     if (target) target.classList.add('active');
     if (pageId === 'logs') loadLogs();
+    // 切页后刷新 APPLY 条显隐（只在 config 页 + dirty 时显示）
+    if (typeof updateApplyBar === 'function') updateApplyBar();
   });
 });
 
@@ -2131,12 +2133,16 @@ function updateApplyBar() {
   const text = document.querySelector('.apply-bar-text');
   const btn = document.getElementById('applyConfigBtn');
   if (!bar || !text || !btn) return;
+  const onConfigPage = document.querySelector('.nav-tab.active')?.dataset.page === 'config';
   const { dirty, parts } = computeConfigDiff();
-  if (dirty) {
+  // 只在 CONFIG 页 + 有未保存改动时才显示 APPLY 条
+  if (onConfigPage && dirty) {
+    bar.style.display = '';
     bar.classList.add('dirty');
     btn.classList.add('has-changes');
     text.innerHTML = '<span class="unsaved-badge">UNSAVED</span>待保存：<strong>' + esc(parts.join(' · ')) + '</strong> — 点 APPLY 生效并热重载。';
   } else {
+    bar.style.display = 'none';
     bar.classList.remove('dirty');
     btn.classList.remove('has-changes');
     text.innerHTML = '// 已同步。修改后点击 APPLY 保存到本地配置文件并热重载。';
