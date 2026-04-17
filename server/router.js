@@ -319,6 +319,8 @@ async function resolveRoute(hostname, config = {}, options = {}) {
 
   for (const entry of rules) {
     const rule = toRuleObject(entry);
+    // 跳过被禁用的规则
+    if (rule && rule.enabled === false) continue;
     const result = matchRuleAgainstContext(rule, context);
     if (result.matched && result.score > matchedScore) {
       matchedRule = rule;

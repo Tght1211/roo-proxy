@@ -45,8 +45,8 @@ test('normalizeConfig keeps backward compatibility for legacy string rules', () 
     upstreams: [],
   });
   assert.deepEqual(config.rules, [
-    { type: 'domain-suffix', value: 'claude.ai', action: 'proxy', upstreams: [] },
-    { type: 'domain-suffix', value: 'chatgpt.com', action: 'proxy', upstreams: [] },
+    { type: 'domain-suffix', value: 'claude.ai', action: 'proxy', upstreams: [], group: '默认', enabled: true },
+    { type: 'domain-suffix', value: 'chatgpt.com', action: 'proxy', upstreams: [], group: '默认', enabled: true },
   ]);
 });
 
@@ -87,12 +87,16 @@ test('normalizeConfig supports explicit default route and per-rule upstream bind
       value: 'chatgpt.com',
       action: 'proxy',
       upstreams: ['residential'],
+      group: '默认',
+      enabled: true,
     },
     {
       type: 'geo-country',
       value: 'US',
       action: 'direct',
       upstreams: [],
+      group: '默认',
+      enabled: true,
     },
   ]);
 });
@@ -111,10 +115,10 @@ test('normalizeConfig supports CIDR and geo-region rule values', () => {
   });
 
   assert.deepEqual(config.rules, [
-    { type: 'ipv4-cidr', value: '1.2.3.0/24', action: 'proxy', upstreams: ['residential'] },
-    { type: 'ipv6-cidr', value: '2001:db8:0:0:0:0:0:0/32', action: 'proxy', upstreams: ['residential'] },
-    { type: 'geo-region', value: 'US-CA', action: 'proxy', upstreams: ['residential'] },
-    { type: 'domain-keyword', value: 'chatgpt', action: 'proxy', upstreams: ['residential'] },
+    { type: 'ipv4-cidr', value: '1.2.3.0/24', action: 'proxy', upstreams: ['residential'], group: '默认', enabled: true },
+    { type: 'ipv6-cidr', value: '2001:db8:0:0:0:0:0:0/32', action: 'proxy', upstreams: ['residential'], group: '默认', enabled: true },
+    { type: 'geo-region', value: 'US-CA', action: 'proxy', upstreams: ['residential'], group: '默认', enabled: true },
+    { type: 'domain-keyword', value: 'chatgpt', action: 'proxy', upstreams: ['residential'], group: '默认', enabled: true },
   ]);
 });
 

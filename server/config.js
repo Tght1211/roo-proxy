@@ -321,6 +321,8 @@ function normalizeRule(rule, index, upstreamNameSet) {
       value,
       action: 'proxy',
       upstreams: [],
+      group: '默认',
+      enabled: true,
     };
   }
 
@@ -340,11 +342,15 @@ function normalizeRule(rule, index, upstreamNameSet) {
 
   const value = normalizeRuleValue(type, rawValue, label);
   const normalizedRoute = normalizeRoute(rule, upstreamNameSet, `规则 ${formatRuleLabel({ type, value })}`);
+  const group = String(rule.group == null ? '默认' : rule.group).trim().slice(0, 60) || '默认';
+  const enabled = rule.enabled !== false;
   return {
     type,
     value,
     action: normalizedRoute.action,
     upstreams: normalizedRoute.upstreams,
+    group,
+    enabled,
   };
 }
 

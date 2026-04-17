@@ -749,13 +749,52 @@ function renderHtml() {
       background:linear-gradient(180deg,var(--panel-2) 0%,var(--panel) 100%);
       border-top:1px solid var(--border);padding:10px 28px;
       display:flex;align-items:center;justify-content:space-between;gap:12px;
-      flex-shrink:0;flex-wrap:wrap;position:relative;
+      flex-shrink:0;flex-wrap:wrap;position:relative;transition:all .3s;
     }
     .apply-bar::before{
       content:'';position:absolute;left:0;right:0;top:-1px;height:1px;
       background:linear-gradient(90deg,transparent 0%,var(--cyan) 50%,transparent 100%);opacity:.4;
     }
-    .apply-bar-text{font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+    .apply-bar.dirty{
+      background:linear-gradient(180deg,rgba(253,224,71,.08) 0%,var(--panel) 100%);
+      border-top-color:var(--yellow-dim);
+    }
+    .apply-bar.dirty::before{
+      background:linear-gradient(90deg,transparent 0%,var(--yellow) 50%,transparent 100%);
+      opacity:.85;
+    }
+    .apply-bar-text{font-size:11.5px;color:var(--text-3);font-family:var(--mono);flex:1}
+    .apply-bar-text strong{color:var(--yellow);font-weight:700}
+    .apply-bar-text .unsaved-badge{
+      display:inline-flex;align-items:center;gap:5px;padding:2px 8px;margin-right:8px;
+      background:var(--yellow-soft);color:var(--yellow);border:1px solid var(--yellow-dim);
+      font-weight:700;font-size:10.5px;letter-spacing:.12em;
+    }
+    .apply-bar-text .unsaved-badge::before{
+      content:'';width:6px;height:6px;background:var(--yellow);box-shadow:0 0 6px var(--yellow-glow);
+      animation:pulse 1.2s infinite;
+    }
+
+    /* APPLY 按钮未保存时：扫光 + 呼吸 halo */
+    .btn-primary.has-changes{
+      position:relative;overflow:hidden;
+      animation:applyBreathe 1.8s ease-in-out infinite;
+    }
+    @keyframes applyBreathe{
+      0%,100%{box-shadow:0 0 0 transparent,0 0 0 transparent}
+      50%{box-shadow:0 0 18px var(--cyan-glow),0 0 4px var(--cyan)}
+    }
+    .btn-primary.has-changes::after{
+      content:'';position:absolute;top:0;left:-120%;width:60%;height:100%;
+      background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.85) 50%,transparent 80%);
+      animation:applySweep 2.2s linear infinite;
+      pointer-events:none;
+    }
+    @keyframes applySweep{
+      0%{left:-120%}
+      60%{left:220%}
+      100%{left:220%}
+    }
 
     /* ---- KV box ---- */
     .kv{display:grid;grid-template-columns:auto 1fr;gap:8px 20px;font-size:12px}
@@ -1082,11 +1121,17 @@ function renderHtml() {
         <div class="card" id="rulesCard">
           <div class="sec-h">
             <div class="sec-t"><span class="dot"></span>分流规则</div>
-            <button class="btn btn-primary btn-sm" id="addRuleBtn">+ 添加规则</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" id="clashImportOpenBtn">⇪ 批量导入</button>
+              <button class="btn btn-primary btn-sm" id="addRuleBtn">+ 添加规则</button>
+            </div>
           </div>
           <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">规则决定流量是直连，还是进入某个出口节点池；表格靠上的规则优先命中。仅在「规则模式」下生效。</div>
           <div class="filter-bar">
             <input class="form-control filter-search" id="ruleFilterSearch" placeholder="搜索匹配值，如 claude.ai / 10.0.0.0 / CN" />
+            <select class="form-control filter-select" id="ruleFilterGroup">
+              <option value="">全部分组</option>
+            </select>
             <select class="form-control filter-select" id="ruleFilterType">
               <option value="">全部类型</option>
               <option value="domain-suffix">domain-suffix</option>
@@ -1105,6 +1150,11 @@ function renderHtml() {
             <select class="form-control filter-select" id="ruleFilterUpstream">
               <option value="">全部出口</option>
             </select>
+            <select class="form-control filter-select" id="ruleFilterEnabled" style="min-width:110px">
+              <option value="">全部状态</option>
+              <option value="on">仅启用</option>
+              <option value="off">仅禁用</option>
+            </select>
             <select class="form-control filter-select" id="ruleFilterPageSize" style="min-width:90px">
               <option value="20">20 / 页</option>
               <option value="50">50 / 页</option>
@@ -1113,7 +1163,7 @@ function renderHtml() {
             <button class="btn btn-ghost btn-sm" id="ruleFilterReset">重置筛选</button>
           </div>
           <table id="rulesTable" style="display:none">
-            <thead><tr><th style="width:40px">#</th><th>类型</th><th>匹配值</th><th>动作</th><th>出口节点</th><th>操作</th></tr></thead>
+            <thead><tr><th style="width:40px">#</th><th>启用</th><th>分组</th><th>类型</th><th>匹配值</th><th>动作</th><th>出口节点</th><th>操作</th></tr></thead>
             <tbody id="rulesBody"></tbody>
           </table>
           <div class="empty-tip" id="rulesEmpty">暂无规则，点击「添加」新建</div>
@@ -1191,31 +1241,79 @@ function renderHtml() {
   <div class="modal-overlay" id="ruleModal">
     <div class="modal">
       <div class="modal-title" id="ruleModalTitle">添加分流规则</div>
-      <div class="form-group"><label class="form-label">规则类型</label>
-        <select class="form-control" id="ruleType">
-          <option value="domain-suffix">域名后缀 (domain-suffix)</option>
-          <option value="domain-exact">精确域名 (domain-exact)</option>
-          <option value="domain-keyword">域名关键词 (domain-keyword)</option>
-          <option value="ipv4-cidr">IPv4 CIDR</option>
-          <option value="ipv6-cidr">IPv6 CIDR</option>
-          <option value="geo-country">国家代码 (geo-country)</option>
-          <option value="geo-region">地区代码 (geo-region)</option>
-        </select>
+      <div class="grid-2" style="gap:12px">
+        <div class="form-group"><label class="form-label">规则类型</label>
+          <select class="form-control" id="ruleType">
+            <option value="domain-suffix">域名后缀 (domain-suffix)</option>
+            <option value="domain-exact">精确域名 (domain-exact)</option>
+            <option value="domain-keyword">域名关键词 (domain-keyword)</option>
+            <option value="ipv4-cidr">IPv4 CIDR</option>
+            <option value="ipv6-cidr">IPv6 CIDR</option>
+            <option value="geo-country">国家代码 (geo-country)</option>
+            <option value="geo-region">地区代码 (geo-region)</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">动作</label>
+          <select class="form-control" id="ruleAction">
+            <option value="proxy">代理 (proxy)</option>
+            <option value="direct">直连 (direct)</option>
+          </select>
+        </div>
       </div>
       <div class="form-group"><label class="form-label">匹配值 *</label><input class="form-control" id="ruleValue" placeholder="如: claude.ai" /></div>
-      <div class="form-group"><label class="form-label">动作</label>
-        <select class="form-control" id="ruleAction">
-          <option value="proxy">代理 (proxy)</option>
-          <option value="direct">直连 (direct)</option>
-        </select>
-      </div>
+      <div class="form-group"><label class="form-label">分组</label><input class="form-control" id="ruleGroup" list="ruleGroupOptions" placeholder="如: AI / 国内 / 默认" /><datalist id="ruleGroupOptions"></datalist></div>
       <div class="form-group" id="ruleUpstreamsGroup">
         <label class="form-label">出口节点</label>
         <div id="ruleUpstreamCheckboxes"></div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:6px;font-family:var(--mono)">// 不勾选 = 从出口节点池按「负载均衡策略」挑（CHAIN tab 设置）</div>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:12px">
+        <label class="form-label" style="margin:0">启用该规则</label>
+        <label class="toggle"><input type="checkbox" id="ruleEnabled" checked /><span class="toggle-slider"></span></label>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" id="ruleCancelBtn">取消</button>
         <button class="btn btn-primary" id="ruleSaveBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clash Import Modal -->
+  <div class="modal-overlay" id="clashImportModal">
+    <div class="modal" style="width:820px">
+      <div class="modal-title">批量导入 · 粘贴 Clash 风格规则</div>
+      <div style="font-size:11.5px;color:var(--text-3);margin-bottom:10px;line-height:1.7;font-family:var(--mono)">
+        // 支持 Clash 规则前缀：DOMAIN / DOMAIN-SUFFIX / DOMAIN-KEYWORD / IP-CIDR / IP-CIDR6 / GEOIP<br>
+        // 不支持 PROCESS-NAME（Roo 是纯网络代理，看不到进程名）—— 粘贴时自动跳过<br>
+        // 支持任意格式：纯行、带引号、逗号结尾、注释行（// 或 #）都能识别
+      </div>
+      <div class="form-group">
+        <label class="form-label">粘贴规则（每行一条）</label>
+        <textarea class="form-control" id="clashInput" rows="10" style="font-family:var(--mono);font-size:12px;resize:vertical" placeholder='DOMAIN-SUFFIX,claude.ai,🛬 AI落地节点
+DOMAIN-SUFFIX,alipay.com,DIRECT
+PROCESS-NAME,Claude,🛬 AI落地节点'></textarea>
+      </div>
+      <div class="grid-2" style="gap:12px">
+        <div class="form-group"><label class="form-label">导入到分组</label><input class="form-control" id="clashImportGroup" value="导入" /></div>
+        <div class="form-group"><label class="form-label">位置</label>
+          <select class="form-control" id="clashImportPosition">
+            <option value="prepend">插入到表格最上方（优先命中）</option>
+            <option value="append">追加到表格末尾</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" id="clashMappingGroup" style="display:none">
+        <label class="form-label">未识别的 target → 映射到 Roo 出口</label>
+        <div id="clashMappingList" style="display:grid;gap:8px;max-height:240px;overflow-y:auto;padding:2px"></div>
+      </div>
+      <div class="form-group" id="clashPreviewGroup" style="display:none">
+        <label class="form-label">预览（将导入 <span id="clashPreviewCount">0</span> 条，跳过 <span id="clashSkipCount">0</span> 条）</label>
+        <div id="clashPreviewList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px;background:var(--panel-2);font-size:11.5px;font-family:var(--mono)"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="clashCancelBtn">取消</button>
+        <button class="btn btn-ghost" id="clashParseBtn">解析预览</button>
+        <button class="btn btn-primary" id="clashImportBtn" disabled>导入 <span id="clashImportCount">0</span> 条</button>
       </div>
     </div>
   </div>
@@ -1226,7 +1324,7 @@ let editUpIdx = -1;
 let overviewRefreshToken = 0;
 let lastNetDiagRenderKey = null;
 let upViaExpanded = false;
-const ruleFilter = { search: '', type: '', action: '', upstream: '', page: 1, pageSize: 20 };
+const ruleFilter = { search: '', type: '', action: '', upstream: '', group: '', enabled: '', page: 1, pageSize: 20 };
 
 function updateTopbarStatus(running) {
   const el = document.getElementById('sidebarStatus');
@@ -1857,6 +1955,48 @@ function renderOverview(s) {
 }
 
 
+// ---- Unsaved-changes tracker + APPLY 扫光 ----
+function computeConfigDiff() {
+  if (!cfg || !originalCfg) return { dirty: false, parts: [] };
+  const parts = [];
+  if (cfg.traffic_mode !== originalCfg.traffic_mode) parts.push('流量模式');
+  if (cfg.balance_strategy !== originalCfg.balance_strategy) parts.push('负载策略');
+  if (JSON.stringify(cfg.default_route || {}) !== JSON.stringify(originalCfg.default_route || {})) parts.push('默认路由');
+
+  const oldUp = originalCfg.upstreams || [];
+  const newUp = cfg.upstreams || [];
+  if (JSON.stringify(newUp) !== JSON.stringify(oldUp)) {
+    if (newUp.length !== oldUp.length) parts.push('出口节点 (' + oldUp.length + '→' + newUp.length + ')');
+    else parts.push('出口节点');
+  }
+
+  const oldRul = originalCfg.rules || [];
+  const newRul = cfg.rules || [];
+  if (JSON.stringify(newRul) !== JSON.stringify(oldRul)) {
+    if (newRul.length !== oldRul.length) parts.push('分流规则 (' + oldRul.length + '→' + newRul.length + ')');
+    else parts.push('分流规则');
+  }
+
+  return { dirty: parts.length > 0, parts };
+}
+
+function updateApplyBar() {
+  const bar = document.querySelector('.apply-bar');
+  const text = document.querySelector('.apply-bar-text');
+  const btn = document.getElementById('applyConfigBtn');
+  if (!bar || !text || !btn) return;
+  const { dirty, parts } = computeConfigDiff();
+  if (dirty) {
+    bar.classList.add('dirty');
+    btn.classList.add('has-changes');
+    text.innerHTML = '<span class="unsaved-badge">UNSAVED</span>待保存：<strong>' + esc(parts.join(' · ')) + '</strong> — 点 APPLY 生效并热重载。';
+  } else {
+    bar.classList.remove('dirty');
+    btn.classList.remove('has-changes');
+    text.innerHTML = '// 已同步。修改后点击 APPLY 保存到本地配置文件并热重载。';
+  }
+}
+
 // ---- Traffic mode switcher ----
 const MODE_HINTS = {
   rule: '命中规则 → 按规则处理；未命中 → 按「默认路由」处理。规则表中靠上的优先。',
@@ -1881,6 +2021,7 @@ document.querySelectorAll('.mode-btn').forEach((btn) => {
     if (!cfg) return;
     cfg.traffic_mode = btn.dataset.mode;
     renderTrafficMode();
+    updateApplyBar();
   });
 });
 
@@ -1928,6 +2069,7 @@ function renderConfig() {
 
   renderRulesUpstreamFilterOptions();
   renderRules();
+  updateApplyBar();
 }
 
 function renderRulesUpstreamFilterOptions() {
@@ -1941,10 +2083,34 @@ function renderRulesUpstreamFilterOptions() {
   sel.value = names.includes(current) || current === '__direct__' || current === '' ? current : '';
 }
 
+function getRuleGroups() {
+  const set = new Set();
+  (cfg?.rules || []).forEach(r => set.add((r.group || '默认').trim() || '默认'));
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh'));
+}
+
+function renderRuleGroupOptions() {
+  const sel = document.getElementById('ruleFilterGroup');
+  const dl = document.getElementById('ruleGroupOptions');
+  const groups = getRuleGroups();
+  if (sel) {
+    const current = sel.value;
+    sel.innerHTML = '<option value="">全部分组</option>'
+      + groups.map(g => '<option value="' + esc(g) + '">' + esc(g) + '</option>').join('');
+    sel.value = groups.includes(current) ? current : '';
+  }
+  if (dl) {
+    dl.innerHTML = groups.map(g => '<option value="' + esc(g) + '"></option>').join('');
+  }
+}
+
 function matchRuleFilter(r) {
   const f = ruleFilter;
   if (f.type && r.type !== f.type) return false;
   if (f.action && r.action !== f.action) return false;
+  if (f.group && (r.group || '默认') !== f.group) return false;
+  if (f.enabled === 'on' && r.enabled === false) return false;
+  if (f.enabled === 'off' && r.enabled !== false) return false;
   if (f.upstream) {
     const ups = r.upstreams || [];
     if (f.upstream === '__direct__') {
@@ -1955,13 +2121,14 @@ function matchRuleFilter(r) {
   }
   if (f.search) {
     const q = f.search.toLowerCase();
-    const hay = [r.value, r.type, r.action, (r.upstreams || []).join(',')].join(' ').toLowerCase();
+    const hay = [r.value, r.type, r.action, r.group || '', (r.upstreams || []).join(',')].join(' ').toLowerCase();
     if (!hay.includes(q)) return false;
   }
   return true;
 }
 
 function renderRules() {
+  renderRuleGroupOptions();
   const rules = cfg?.rules || [];
   const filtered = rules.map((r, i) => ({ r, i })).filter(x => matchRuleFilter(x.r));
   const total = filtered.length;
@@ -1999,12 +2166,17 @@ function renderRules() {
   empty.style.display = 'none';
   pageRows.forEach(({ r, i }) => {
     const tr = document.createElement('tr');
+    const enabled = r.enabled !== false;
+    const group = r.group || '默认';
+    tr.style.opacity = enabled ? '1' : '0.5';
     tr.innerHTML =
       '<td style="color:var(--text-3);font-size:12px">' + (i + 1) + '</td>' +
+      '<td><label class="toggle" style="width:36px;height:18px"><input type="checkbox"' + (enabled ? ' checked' : '') + ' onchange="toggleRuleEnabled(' + i + ')" /><span class="toggle-slider"></span></label></td>' +
+      '<td><span class="badge badge-blue" style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="' + esc(group) + '">' + esc(group) + '</span></td>' +
       '<td><span class="badge badge-purple">' + esc(r.type) + '</span></td>' +
       '<td><code>' + esc(r.value) + '</code></td>' +
       '<td><span class="badge ' + (r.action === 'proxy' ? 'badge-amber' : 'badge-gray') + '">' + esc(r.action) + '</span></td>' +
-      '<td style="font-size:12px;color:var(--text-2)">' + ((r.upstreams || []).join(', ') || '-') + '</td>' +
+      '<td style="font-size:12px;color:var(--text-2)">' + ((r.upstreams || []).join(', ') || '<span style="color:var(--text-3)">池选</span>') + '</td>' +
       '<td style="white-space:nowrap">' +
         '<button class="btn btn-ghost btn-sm" onclick="editRule(' + i + ')">编辑</button> ' +
         '<button class="btn btn-danger btn-sm" onclick="delRule(' + i + ')">删除</button>' +
@@ -2095,8 +2267,8 @@ document.getElementById('toggleUpViaBtn').addEventListener('click', () => {
   renderUpViaGroup();
 });
 
-document.getElementById('cfgStrategy').addEventListener('change', e => { if (cfg) cfg.balance_strategy = e.target.value; });
-document.getElementById('cfgDefaultRoute').addEventListener('change', e => { if (cfg) cfg.default_route = { action: e.target.value, upstreams: [] }; });
+document.getElementById('cfgStrategy').addEventListener('change', e => { if (cfg) { cfg.balance_strategy = e.target.value; updateApplyBar(); } });
+document.getElementById('cfgDefaultRoute').addEventListener('change', e => { if (cfg) { cfg.default_route = { action: e.target.value, upstreams: [] }; updateApplyBar(); } });
 
 // ---- Rule filter / pagination ----
 function bindRuleFilterEvents() {
@@ -2122,16 +2294,24 @@ function bindRuleFilterEvents() {
   actionSel.addEventListener('change', (e) => { ruleFilter.action = e.target.value; ruleFilter.page = 1; renderRules(); });
   upstreamSel.addEventListener('change', (e) => { ruleFilter.upstream = e.target.value; ruleFilter.page = 1; renderRules(); });
   pageSizeSel.addEventListener('change', (e) => { ruleFilter.pageSize = parseInt(e.target.value, 10) || 20; ruleFilter.page = 1; renderRules(); });
+  const groupSel = document.getElementById('ruleFilterGroup');
+  const enabledSel = document.getElementById('ruleFilterEnabled');
+  if (groupSel) groupSel.addEventListener('change', (e) => { ruleFilter.group = e.target.value; ruleFilter.page = 1; renderRules(); });
+  if (enabledSel) enabledSel.addEventListener('change', (e) => { ruleFilter.enabled = e.target.value; ruleFilter.page = 1; renderRules(); });
   reset.addEventListener('click', () => {
     ruleFilter.search = '';
     ruleFilter.type = '';
     ruleFilter.action = '';
     ruleFilter.upstream = '';
+    ruleFilter.group = '';
+    ruleFilter.enabled = '';
     ruleFilter.page = 1;
     search.value = '';
     typeSel.value = '';
     actionSel.value = '';
     upstreamSel.value = '';
+    if (groupSel) groupSel.value = '';
+    if (enabledSel) enabledSel.value = '';
     renderRules();
   });
   prev.addEventListener('click', () => { if (ruleFilter.page > 1) { ruleFilter.page--; renderRules(); } });
@@ -2233,7 +2413,10 @@ document.getElementById('addRuleBtn').addEventListener('click', () => {
   document.getElementById('ruleType').value = 'domain-suffix';
   document.getElementById('ruleValue').value = '';
   document.getElementById('ruleAction').value = 'proxy';
+  document.getElementById('ruleGroup').value = '默认';
+  document.getElementById('ruleEnabled').checked = true;
   document.getElementById('ruleUpstreamsGroup').style.display = '';
+  renderRuleGroupOptions();
   renderRuleUpstreams([]);
   document.getElementById('ruleModal').classList.add('open');
 });
@@ -2245,7 +2428,10 @@ window.editRule = i => {
   document.getElementById('ruleType').value = r.type;
   document.getElementById('ruleValue').value = r.value;
   document.getElementById('ruleAction').value = r.action;
+  document.getElementById('ruleGroup').value = r.group || '默认';
+  document.getElementById('ruleEnabled').checked = r.enabled !== false;
   document.getElementById('ruleUpstreamsGroup').style.display = r.action === 'proxy' ? '' : 'none';
+  renderRuleGroupOptions();
   renderRuleUpstreams(r.upstreams || []);
   document.getElementById('ruleModal').classList.add('open');
 };
@@ -2256,16 +2442,160 @@ window.delRule = i => {
   renderConfig();
 };
 
+window.toggleRuleEnabled = i => {
+  if (!cfg || !cfg.rules[i]) return;
+  cfg.rules[i].enabled = cfg.rules[i].enabled === false ? true : false;
+  renderRules();
+};
+
 
 document.getElementById('ruleCancelBtn').addEventListener('click', () => document.getElementById('ruleModal').classList.remove('open'));
+
+// ---- Clash 风格规则批量导入 ----
+let clashParseResult = null;
+
+function parseClashRules(text) {
+  const parsed = [];
+  const skipped = [];
+  const targets = new Set();
+  const lines = String(text || '').split(/\\r?\\n/);
+  for (const raw of lines) {
+    let line = raw.trim();
+    if (!line) continue;
+    if (/^\\/\\//.test(line) || /^#/.test(line)) continue;
+    line = line.replace(/[,，]?\\s*$/, ''); // 去尾逗号
+    line = line.replace(/^["']|["']$/g, ''); // 去外层引号
+    const m = line.match(/^([A-Z][A-Z0-9\\-]*)\\s*[,，]\\s*(.+)$/);
+    if (!m) { skipped.push({ line: raw, reason: '无法解析' }); continue; }
+    const kind = m[1].toUpperCase();
+    let rest = m[2].replace(/["']$/g, '').replace(/^["']/, '');
+    rest = rest.replace(/\\s*,\\s*no-resolve\\s*$/i, '');
+    const parts = rest.split(/\\s*,\\s*/);
+    const value = (parts[0] || '').trim();
+    const target = (parts[1] || '').trim();
+    if (!value || !target) { skipped.push({ line: raw, reason: '缺少字段' }); continue; }
+    let type;
+    if (kind === 'DOMAIN') type = 'domain-exact';
+    else if (kind === 'DOMAIN-SUFFIX') type = 'domain-suffix';
+    else if (kind === 'DOMAIN-KEYWORD') type = 'domain-keyword';
+    else if (kind === 'IP-CIDR') type = value.includes(':') ? 'ipv6-cidr' : 'ipv4-cidr';
+    else if (kind === 'IP-CIDR6') type = 'ipv6-cidr';
+    else if (kind === 'GEOIP') type = 'geo-country';
+    else if (kind === 'PROCESS-NAME' || kind === 'PROCESS-PATH') { skipped.push({ line: raw, reason: 'Roo 不支持 PROCESS-*（纯网络代理看不到进程）' }); continue; }
+    else if (kind === 'MATCH' || kind === 'FINAL') { skipped.push({ line: raw, reason: '跳过 MATCH/FINAL（用 CHAIN tab 的默认路由替代）' }); continue; }
+    else { skipped.push({ line: raw, reason: '暂不支持类型：' + kind }); continue; }
+    parsed.push({ type, value, target });
+    targets.add(target);
+  }
+  return { parsed, skipped, targets: Array.from(targets) };
+}
+
+function openClashImport() {
+  document.getElementById('clashInput').value = '';
+  document.getElementById('clashImportGroup').value = '导入';
+  document.getElementById('clashMappingGroup').style.display = 'none';
+  document.getElementById('clashPreviewGroup').style.display = 'none';
+  document.getElementById('clashImportBtn').disabled = true;
+  document.getElementById('clashImportCount').textContent = '0';
+  clashParseResult = null;
+  document.getElementById('clashImportModal').classList.add('open');
+}
+
+function renderClashPreview(result) {
+  const mapWrap = document.getElementById('clashMappingGroup');
+  const mapList = document.getElementById('clashMappingList');
+  const preWrap = document.getElementById('clashPreviewGroup');
+  const preList = document.getElementById('clashPreviewList');
+  const skipCount = document.getElementById('clashSkipCount');
+  const preCount = document.getElementById('clashPreviewCount');
+  const impBtn = document.getElementById('clashImportBtn');
+  const impCount = document.getElementById('clashImportCount');
+
+  const upstreams = (cfg?.upstreams || []).map(u => u.name);
+  const BUILTINS = new Set(['DIRECT','REJECT','PROXY','GLOBAL']);
+  const custom = result.targets.filter(t => !BUILTINS.has(t.toUpperCase()));
+
+  if (custom.length) {
+    mapWrap.style.display = '';
+    mapList.innerHTML = custom.map(t => {
+      const autoPick = upstreams.includes(t) ? ('up:' + t) : 'pool';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--panel-2)">'
+        + '<code style="flex:1;background:transparent;border:none;color:var(--magenta)">' + esc(t) + '</code>'
+        + '<span style="color:var(--text-3);font-size:11.5px">→</span>'
+        + '<select class="form-control" data-target="' + esc(t) + '" style="width:280px;height:32px;padding:5px 8px;font-size:12px">'
+        + '<option value="pool"' + (autoPick==='pool'?' selected':'') + '>走出口池（按策略挑选）</option>'
+        + '<option value="direct">直连（DIRECT）</option>'
+        + '<option value="skip">跳过不导入</option>'
+        + upstreams.map(n => '<option value="up:' + esc(n) + '"' + (autoPick==='up:'+n?' selected':'') + '>出口：' + esc(n) + '</option>').join('')
+        + '</select>'
+        + '</div>';
+    }).join('');
+  } else {
+    mapWrap.style.display = 'none';
+  }
+
+  preWrap.style.display = '';
+  preCount.textContent = String(result.parsed.length);
+  skipCount.textContent = String(result.skipped.length);
+  const head = result.parsed.slice(0, 30).map(r =>
+    '<div>' + esc(r.type).padEnd(16) + ' &nbsp; ' + esc(r.value) + '  <span style="color:var(--cyan)">→</span>  <span style="color:var(--magenta)">' + esc(r.target) + '</span></div>'
+  ).join('');
+  const more = result.parsed.length > 30 ? '<div style="color:var(--text-3);margin-top:6px">... 及另外 ' + (result.parsed.length - 30) + ' 条</div>' : '';
+  const skippedInfo = result.skipped.length
+    ? '<div style="margin-top:10px;color:var(--yellow)">// 跳过 ' + result.skipped.length + ' 行：'
+      + result.skipped.slice(0, 5).map(s => esc(s.reason)).join('；') + (result.skipped.length > 5 ? '…' : '') + '</div>'
+    : '';
+  preList.innerHTML = head + more + skippedInfo;
+
+  impBtn.disabled = result.parsed.length === 0;
+  impCount.textContent = String(result.parsed.length);
+}
+
+document.getElementById('clashImportOpenBtn').addEventListener('click', openClashImport);
+document.getElementById('clashCancelBtn').addEventListener('click', () => document.getElementById('clashImportModal').classList.remove('open'));
+document.getElementById('clashParseBtn').addEventListener('click', () => {
+  const text = document.getElementById('clashInput').value;
+  clashParseResult = parseClashRules(text);
+  renderClashPreview(clashParseResult);
+});
+document.getElementById('clashImportBtn').addEventListener('click', () => {
+  if (!clashParseResult || !clashParseResult.parsed.length) return;
+  const groupName = (document.getElementById('clashImportGroup').value.trim() || '导入').slice(0, 60);
+  const position = document.getElementById('clashImportPosition').value;
+
+  const userMap = {};
+  document.querySelectorAll('#clashMappingList select').forEach(sel => { userMap[sel.dataset.target] = sel.value; });
+  const BUILT = { DIRECT: 'direct', REJECT: 'skip', PROXY: 'pool', GLOBAL: 'pool' };
+
+  const newRules = [];
+  for (const r of clashParseResult.parsed) {
+    const mapKey = userMap[r.target] ?? BUILT[r.target.toUpperCase()] ?? 'pool';
+    if (mapKey === 'skip') continue;
+    let rule;
+    if (mapKey === 'direct') rule = { type: r.type, value: r.value, action: 'direct', upstreams: [], group: groupName, enabled: true };
+    else if (mapKey === 'pool') rule = { type: r.type, value: r.value, action: 'proxy', upstreams: [], group: groupName, enabled: true };
+    else if (mapKey.startsWith('up:')) rule = { type: r.type, value: r.value, action: 'proxy', upstreams: [mapKey.slice(3)], group: groupName, enabled: true };
+    else continue;
+    newRules.push(rule);
+  }
+
+  if (!cfg.rules) cfg.rules = [];
+  cfg.rules = position === 'prepend' ? [...newRules, ...cfg.rules] : [...cfg.rules, ...newRules];
+
+  document.getElementById('clashImportModal').classList.remove('open');
+  toast('已导入 ' + newRules.length + ' 条规则到分组「' + groupName + '」，别忘了 APPLY 生效');
+  renderConfig();
+});
 
 document.getElementById('ruleSaveBtn').addEventListener('click', () => {
   const type = document.getElementById('ruleType').value;
   const value = document.getElementById('ruleValue').value.trim();
   const action = document.getElementById('ruleAction').value;
+  const group = (document.getElementById('ruleGroup').value.trim() || '默认').slice(0, 60);
+  const enabled = document.getElementById('ruleEnabled').checked;
   const upstreams = [...document.querySelectorAll('#ruleUpstreamCheckboxes input:checked')].map(el => el.value);
   if (!value) { toast('匹配值不能为空', 'error'); return; }
-  const rule = { type, value, action, upstreams };
+  const rule = { type, value, action, upstreams, group, enabled };
   if (editRuleIdx >= 0) cfg.rules[editRuleIdx] = rule; else cfg.rules.push(rule);
   document.getElementById('ruleModal').classList.remove('open');
   renderConfig();
@@ -2273,7 +2603,10 @@ document.getElementById('ruleSaveBtn').addEventListener('click', () => {
 
 document.getElementById('applyConfigBtn').addEventListener('click', async () => {
   const btn = document.getElementById('applyConfigBtn');
-  btn.disabled = true; btn.textContent = '保存中...';
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  btn.classList.remove('has-changes');
   try {
     const result = await api('/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2286,7 +2619,9 @@ document.getElementById('applyConfigBtn').addEventListener('click', async () => 
   } catch (e) {
     toast('保存失败：' + e.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = '✓ 应用配置';
+    btn.disabled = false;
+    btn.textContent = origLabel || '✓ APPLY';
+    updateApplyBar();
   }
 });
 
