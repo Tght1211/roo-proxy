@@ -397,39 +397,33 @@ function renderHtml() {
     html,body{height:100%}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
       background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;
-      display:flex;overflow:hidden;-webkit-font-smoothing:antialiased}
+      display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
 
-    /* ---- Sidebar ---- */
-    .sidebar{width:232px;background:#0b1120;color:#cbd5e1;display:flex;flex-direction:column;flex-shrink:0;
-      background-image:linear-gradient(180deg,#0b1120 0%,#0f172a 100%)}
-    .brand{padding:22px 20px;border-bottom:1px solid rgba(148,163,184,.08);display:flex;align-items:center;gap:10px}
-    .brand-logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#2563eb,#8b5cf6);
-      display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:15px;
+    /* ---- Topbar ---- */
+    .topbar{background:var(--panel);padding:12px 28px;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between;gap:16px;flex-shrink:0}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand-logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#2563eb,#8b5cf6);
+      display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px;
       box-shadow:0 4px 12px rgba(37,99,235,.35)}
-    .brand-text{font-size:15px;font-weight:700;color:#f1f5f9;letter-spacing:.3px}
-    .brand-sub{font-size:11px;color:#64748b;margin-top:2px;letter-spacing:.5px;text-transform:uppercase}
-    .sidebar-nav{flex:1;padding:14px 10px}
-    .nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;cursor:pointer;font-size:13.5px;
-      color:#94a3b8;border-radius:8px;margin-bottom:2px;transition:all .15s;font-weight:500}
-    .nav-item:hover{background:rgba(148,163,184,.08);color:#e2e8f0}
-    .nav-item.active{background:linear-gradient(135deg,rgba(37,99,235,.25),rgba(139,92,246,.15));color:#fff}
-    .nav-item.active .ni-ico{color:#60a5fa}
-    .ni-ico{width:18px;height:18px;flex-shrink:0;color:#64748b;transition:color .15s}
-    .sidebar-footer{padding:14px 20px;border-top:1px solid rgba(148,163,184,.08);font-size:11px;color:#475569;display:flex;align-items:center;gap:8px}
+    .brand-text{font-size:15px;font-weight:700;color:var(--text);letter-spacing:-.01em}
+    .brand-sub{font-size:11px;color:var(--text-3);letter-spacing:.5px;text-transform:uppercase}
+    .topbar-status{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:var(--green-soft);color:#065f46;font-size:12px;font-weight:600}
+    .topbar-status.danger{background:var(--red-soft);color:#991b1b}
+    .topbar-status.warn{background:var(--amber-soft);color:#92400e}
     .pulse{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(16,185,129,.55);animation:pulse 2s infinite}
+    .topbar-status.danger .pulse{background:var(--red);box-shadow:0 0 0 0 rgba(239,68,68,.55);animation:none}
+    .topbar-status.warn .pulse{background:var(--amber);box-shadow:0 0 0 0 rgba(245,158,11,.55);animation:none}
     @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.55)}70%{box-shadow:0 0 0 8px rgba(16,185,129,0)}100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}}
 
     /* ---- Main ---- */
     .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-    .topbar{background:var(--panel);padding:14px 28px;border-bottom:1px solid var(--border);
-      display:flex;align-items:center;justify-content:space-between}
-    .page-title{font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.01em}
-    .page-sub{font-size:12.5px;color:var(--text-3);margin-top:2px}
-    .content{flex:1;overflow-y:auto;padding:24px 28px 32px}
+    .content{flex:1;overflow-y:auto;padding:22px 28px 32px;max-width:1280px;width:100%;margin:0 auto}
 
-    /* ---- Pages ---- */
-    .page{display:none}
-    .page.active{display:block}
+    /* ---- Sections ---- */
+    .section-head{display:flex;align-items:center;gap:8px;margin:22px 0 12px;color:var(--text-2);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .section-head::after{content:'';flex:1;height:1px;background:var(--border-soft)}
+    .section-head:first-child{margin-top:0}
 
     /* ---- Card ---- */
     .card{background:var(--panel);border-radius:var(--radius-lg);padding:20px;box-shadow:var(--shadow);
@@ -546,9 +540,9 @@ function renderHtml() {
     @keyframes slideIn{from{transform:translateX(120px);opacity:0}to{transform:translateX(0);opacity:1}}
 
     /* ---- Apply bar ---- */
-    .apply-bar{position:sticky;bottom:-32px;background:var(--panel);border-top:1px solid var(--border);
-      padding:14px 28px;display:flex;align-items:center;justify-content:space-between;margin:8px -28px -32px;
-      box-shadow:0 -4px 12px rgba(15,23,42,.04)}
+    .apply-bar{background:var(--panel);border-top:1px solid var(--border);
+      padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px;
+      flex-shrink:0;box-shadow:0 -4px 12px rgba(15,23,42,.04);flex-wrap:wrap}
 
     /* ---- Domain bar ---- */
     .bar-row{display:grid;grid-template-columns:180px 1fr 60px;gap:12px;align-items:center;padding:8px 0;font-size:12.5px}
@@ -606,6 +600,29 @@ function renderHtml() {
     .diag-kv-val{font-size:12.5px;color:var(--text);word-break:break-all}
     .card-subtitle{font-size:12px;color:var(--text-3);margin:-4px 0 14px}
 
+    /* ---- Expiry reminder ---- */
+    .expiry-list{display:grid;gap:8px}
+    .expiry-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--border-soft);border-radius:10px;background:#fff}
+
+    /* ---- System proxy card ---- */
+    .sys-endpoints{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:4px 0 12px}
+    .sys-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border-soft);border-radius:10px;background:#fbfcfe}
+    .sys-row-label{font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:.04em;min-width:44px}
+    .sys-row code{flex:1;background:transparent;padding:0;color:var(--text);font-size:12.5px}
+    .sys-meta{font-size:12px;color:var(--text-3);margin-bottom:14px;line-height:1.7}
+    .sys-meta strong{color:var(--text-2);font-weight:600}
+    .sys-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    @media (max-width:720px){.sys-endpoints{grid-template-columns:1fr}}
+
+    /* ---- Filter bar ---- */
+    .filter-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+    .filter-bar .form-control{height:34px;padding:6px 10px;font-size:12.5px}
+    .filter-bar .filter-search{flex:1 1 220px;min-width:200px}
+    .filter-bar .filter-select{width:auto;min-width:130px}
+    .pager{display:flex;align-items:center;gap:8px;justify-content:flex-end;padding:10px 2px 0;font-size:12.5px;color:var(--text-2)}
+    .pager .btn-sm{padding:4px 10px}
+    .pager-meta{margin-right:6px;color:var(--text-3)}
+
     /* ---- Misc ---- */
     .url-text{font-size:12px;font-family:'SFMono-Regular',Consolas,monospace;color:var(--text-2);
       max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -618,7 +635,7 @@ function renderHtml() {
   </style>
 </head>
 <body>
-  <nav class="sidebar">
+  <div class="topbar">
     <div class="brand">
       <div class="brand-logo">R</div>
       <div>
@@ -626,165 +643,139 @@ function renderHtml() {
         <div class="brand-sub">Dashboard</div>
       </div>
     </div>
-    <div class="sidebar-nav">
-      <div class="nav-item active" data-page="overview">
-        <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-        概览
-      </div>
-      <div class="nav-item" data-page="config">
-        <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        链式编排
-      </div>
-      <div class="nav-item" data-page="logs">
-        <svg class="ni-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
-        访问日志
-      </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="topbar-status" id="sidebarStatus"><span class="pulse"></span>服务运行中</span>
+      <button class="btn btn-ghost btn-sm" id="reloadRulesBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        重新拉取
+      </button>
     </div>
-    <div class="sidebar-footer">
-      <span class="pulse"></span>
-      <span id="sidebarStatus">服务运行中</span>
-    </div>
-  </nav>
+  </div>
 
   <div class="main">
-    <div class="topbar">
-      <div>
-        <div class="page-title" id="pageTitle">概览</div>
-        <div class="page-sub" id="pageSub">实时查看链式代理编排状态与出口流量</div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm" id="reloadRulesBtn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          重新拉取
-        </button>
-      </div>
-    </div>
-
     <div class="content">
-      <!-- Overview -->
-      <div class="page active" id="page-overview">
-        <div class="stat-grid">
-          <div class="stat">
-            <div class="stat-h">
-              <div class="stat-label">服务状态</div>
-              <div class="stat-ico ico-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-            </div>
-            <div class="stat-v" id="ovStatus">-</div>
-            <div class="stat-tip" id="ovUptime">-</div>
+      <!-- === 概览 === -->
+      <div class="section-head">概览</div>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-h">
+            <div class="stat-label">服务状态</div>
+            <div class="stat-ico ico-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
           </div>
-          <div class="stat">
-            <div class="stat-h">
-              <div class="stat-label">出口节点健康</div>
-              <div class="stat-ico ico-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-            </div>
-            <div class="stat-v" id="ovUpstream">-</div>
-            <div class="stat-tip" id="ovUpstreamHint">-</div>
-          </div>
-          <div class="stat">
-            <div class="stat-h">
-              <div class="stat-label">今日请求</div>
-              <div class="stat-ico ico-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
-            </div>
-            <div class="stat-v" id="ovToday">-</div>
-            <div class="stat-tip" id="ovTotal">-</div>
-          </div>
-          <div class="stat">
-            <div class="stat-h">
-              <div class="stat-label">平均延迟</div>
-              <div class="stat-ico ico-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-            </div>
-            <div class="stat-v" id="ovLatency">-<small>ms</small></div>
-            <div class="stat-tip" id="ovLatencyHint">-</div>
-          </div>
+          <div class="stat-v" id="ovStatus">-</div>
+          <div class="stat-tip" id="ovUptime">-</div>
         </div>
-
-        <div class="summary-shell neutral" id="ovRunSummary">
-          <div class="summary-head">
-            <div>
-              <div class="summary-eyebrow">
-                <span class="summary-badge neutral" id="ovSummaryBadge"><span class="summary-badge-dot"></span>待检查</span>
-                <span class="summary-meta" id="ovSummaryMeta">加载中</span>
-              </div>
-              <div class="summary-title" id="ovSummaryTitle">正在刷新概览状态</div>
-              <div class="summary-desc" id="ovSummaryDesc">仅展示关键状态与异常提示。</div>
-              <div class="summary-actions" id="ovSummaryActions"></div>
-            </div>
+        <div class="stat">
+          <div class="stat-h">
+            <div class="stat-label">出口节点健康</div>
+            <div class="stat-ico ico-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
           </div>
+          <div class="stat-v" id="ovUpstream">-</div>
+          <div class="stat-tip" id="ovUpstreamHint">-</div>
         </div>
-
-        <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>网络状态</div></div>
-          <div id="ovNetDiag"></div>
-        </div>
-
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-h"><div class="card-title"><span class="dot"></span>出口节点健康状态</div></div>
-            <div id="ovHealthWrap"><div class="empty-tip">加载中...</div></div>
+        <div class="stat">
+          <div class="stat-h">
+            <div class="stat-label">今日请求</div>
+            <div class="stat-ico ico-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
           </div>
-
-          <div class="card">
-            <div class="card-h"><div class="card-title"><span class="dot"></span>服务信息</div></div>
-            <dl class="kv" id="ovInfo"></dl>
-          </div>
+          <div class="stat-v" id="ovToday">-</div>
+          <div class="stat-tip" id="ovTotal">-</div>
         </div>
-
+        <div class="stat">
+          <div class="stat-h">
+            <div class="stat-label">平均延迟</div>
+            <div class="stat-ico ico-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+          </div>
+          <div class="stat-v" id="ovLatency">-<small>ms</small></div>
+          <div class="stat-tip" id="ovLatencyHint">-</div>
+        </div>
       </div>
 
-      <!-- Config -->
-      <div class="page" id="page-config">
+      <div class="summary-shell neutral" id="ovRunSummary">
+        <div class="summary-head">
+          <div>
+            <div class="summary-eyebrow">
+              <span class="summary-badge neutral" id="ovSummaryBadge"><span class="summary-badge-dot"></span>待检查</span>
+              <span class="summary-meta" id="ovSummaryMeta">加载中</span>
+            </div>
+            <div class="summary-title" id="ovSummaryTitle">正在刷新概览状态</div>
+            <div class="summary-desc" id="ovSummaryDesc">仅展示关键状态与异常提示。</div>
+            <div class="summary-actions" id="ovSummaryActions"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="ovExpiryReminder" style="display:none"></div>
+
+      <div class="card">
+        <div class="card-h"><div class="card-title"><span class="dot"></span>网络状态</div></div>
+        <div id="ovNetDiag"></div>
+      </div>
+
+      <div class="grid-2">
         <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>系统配置工具</div></div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">作用范围：完整系统运行配置（balance_strategy / default_route / upstreams / rules），不是仅“全局设置”字段。</div>
-          <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+          <div class="card-h"><div class="card-title"><span class="dot"></span>出口节点健康状态</div></div>
+          <div id="ovHealthWrap"><div class="empty-tip">加载中...</div></div>
+        </div>
+        <div class="card">
+          <div class="card-h"><div class="card-title"><span class="dot"></span>服务信息</div></div>
+          <dl class="kv" id="ovInfo"></dl>
+        </div>
+      </div>
+
+      <!-- === 链式编排 === -->
+      <div class="section-head">链式编排</div>
+
+      <div class="card">
+        <div class="card-h">
+          <div class="card-title"><span class="dot"></span>路由策略</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
             <input type="file" id="configImportInput" accept="application/json,.json" style="display:none" />
-            <button class="btn btn-ghost" id="importConfigBtn">导入系统配置</button>
-            <button class="btn btn-ghost" id="exportConfigBtn">导出系统配置</button>
+            <button class="btn btn-ghost btn-sm" id="importConfigBtn">导入</button>
+            <button class="btn btn-ghost btn-sm" id="exportConfigBtn">导出</button>
           </div>
         </div>
-
-        <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>链式代理编排</div></div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">配置 Roo 如何作为链式代理编排器工作：未命中规则时默认如何处理，命中规则时如何分流到出口节点。</div>
-          <div class="srow">
-            <div>
-              <div class="skey">负载均衡策略</div>
-              <div class="sdesc">多个出口节点时的流量分配方式</div>
-            </div>
-            <select class="form-control" id="cfgStrategy" style="width:200px">
-              <option value="round-robin">轮询 (round-robin)</option>
-              <option value="random">随机 (random)</option>
-              <option value="weighted">加权 (weighted)</option>
-            </select>
+        <div class="srow">
+          <div>
+            <div class="skey">负载均衡策略</div>
+            <div class="sdesc">命中规则时多出口如何分配流量</div>
           </div>
-          <div class="srow">
-            <div>
-              <div class="skey">默认路由</div>
-              <div class="sdesc">未匹配任何规则时的处理方式</div>
-            </div>
-            <select class="form-control" id="cfgDefaultRoute" style="width:200px">
-              <option value="direct">直连 (direct)</option>
-              <option value="proxy">代理 (proxy)</option>
-            </select>
-          </div>
+          <select class="form-control" id="cfgStrategy" style="width:200px">
+            <option value="round-robin">轮询 (round-robin)</option>
+            <option value="random">随机 (random)</option>
+            <option value="weighted">加权 (weighted)</option>
+          </select>
         </div>
+        <div class="srow">
+          <div>
+            <div class="skey">默认路由</div>
+            <div class="sdesc">未匹配任何规则时的处理方式</div>
+          </div>
+          <select class="form-control" id="cfgDefaultRoute" style="width:200px">
+            <option value="direct">直连 (direct)</option>
+            <option value="proxy">代理 (proxy)</option>
+          </select>
+        </div>
+      </div>
 
         <div class="card">
-          <div class="card-h"><div class="card-title"><span class="dot"></span>系统代理接管（macOS）</div></div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">可将 macOS 系统代理直接指向 Roo 本地入口（同端口支持 HTTP / HTTPS CONNECT / SOCKS5），避免手动在多个程序里重复配置代理端口。</div>
-          <div class="srow">
-            <div>
-              <div class="skey">当前接入方式</div>
-              <div class="sdesc" id="sysProxySummary">正在读取系统代理状态...</div>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-              <button class="btn btn-ghost" id="refreshSystemProxyBtn">刷新状态</button>
-              <button class="btn btn-ghost" id="restoreSystemProxyBtn">恢复系统代理</button>
-              <button class="btn btn-danger" id="disableSystemProxyBtn">关闭接管</button>
-              <button class="btn btn-primary" id="enableSystemProxyBtn">开启接管</button>
-            </div>
+          <div class="card-h">
+            <div class="card-title"><span class="dot"></span>系统代理接管（macOS）</div>
+            <span class="badge badge-gray" id="sysProxyBadge"><span class="badge-dot"></span>读取中</span>
           </div>
-          <div id="sysProxyDetail" style="font-size:12px;color:var(--text-3);line-height:1.8"></div>
+          <div class="card-subtitle" id="sysProxySummary">把 macOS 系统代理指向 Roo 本地入口（HTTP / HTTPS / SOCKS 同端口）。</div>
+          <div class="sys-endpoints">
+            <div class="sys-row"><span class="sys-row-label">HTTP</span><code id="sysEndpointHttp">-</code></div>
+            <div class="sys-row"><span class="sys-row-label">HTTPS</span><code id="sysEndpointHttps">-</code></div>
+            <div class="sys-row"><span class="sys-row-label">SOCKS</span><code id="sysEndpointSocks">-</code></div>
+          </div>
+          <div class="sys-meta" id="sysProxyDetail"></div>
+          <div class="sys-actions">
+            <button class="btn btn-ghost" id="refreshSystemProxyBtn">刷新状态</button>
+            <button class="btn btn-ghost" id="restoreSystemProxyBtn">恢复快照</button>
+            <button class="btn btn-danger" id="disableSystemProxyBtn">关闭接管</button>
+            <button class="btn btn-primary" id="enableSystemProxyBtn">开启接管</button>
+          </div>
         </div>
 
         <div class="card">
@@ -805,9 +796,9 @@ function renderHtml() {
             <div class="sec-t"><span class="dot"></span>出口节点池（落地机）</div>
             <button class="btn btn-primary btn-sm" id="addUpstreamBtn">+ 添加出口节点</button>
           </div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">出口节点是最终对外出站的住宅 IP / 落地机。默认会复用上面的全局前置跳板；只有少数高级场景才需要给单个出口单独指定 via。</div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">出口节点 = 最终对外出站的住宅 IP / 落地机。默认复用上方「前置跳板」为中转。仅当某个出口需要走不同中转时，在编辑弹窗里展开「高级设置：单独 via」单独指定；名字旁的 <span class="badge badge-purple">via</span> 徽章代表该出口覆盖了全局前置。</div>
           <table id="upstreamTable" style="display:none">
-            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>单独 via</th><th>权重</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>名称</th><th>协议</th><th>地址</th><th>权重</th><th>状态</th><th>操作</th></tr></thead>
             <tbody id="upstreamBody"></tbody>
           </table>
           <div class="empty-tip" id="upstreamEmpty">暂无出口节点，点击「添加」新建</div>
@@ -818,32 +809,71 @@ function renderHtml() {
             <div class="sec-t"><span class="dot"></span>分流规则</div>
             <button class="btn btn-primary btn-sm" id="addRuleBtn">+ 添加规则</button>
           </div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">规则决定流量是直连，还是进入某个出口节点池；匹配优先级高的规则会优先生效。</div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">规则决定流量是直连，还是进入某个出口节点池；表格靠上的规则优先命中。</div>
+          <div class="filter-bar">
+            <input class="form-control filter-search" id="ruleFilterSearch" placeholder="搜索匹配值，如 claude.ai / 10.0.0.0 / CN" />
+            <select class="form-control filter-select" id="ruleFilterType">
+              <option value="">全部类型</option>
+              <option value="domain-suffix">domain-suffix</option>
+              <option value="domain-exact">domain-exact</option>
+              <option value="domain-keyword">domain-keyword</option>
+              <option value="ipv4-cidr">ipv4-cidr</option>
+              <option value="ipv6-cidr">ipv6-cidr</option>
+              <option value="geo-country">geo-country</option>
+              <option value="geo-region">geo-region</option>
+            </select>
+            <select class="form-control filter-select" id="ruleFilterAction">
+              <option value="">全部动作</option>
+              <option value="proxy">proxy</option>
+              <option value="direct">direct</option>
+            </select>
+            <select class="form-control filter-select" id="ruleFilterUpstream">
+              <option value="">全部出口</option>
+            </select>
+            <select class="form-control filter-select" id="ruleFilterPageSize" style="min-width:90px">
+              <option value="20">20 / 页</option>
+              <option value="50">50 / 页</option>
+              <option value="100">100 / 页</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" id="ruleFilterReset">重置筛选</button>
+          </div>
           <table id="rulesTable" style="display:none">
             <thead><tr><th style="width:40px">#</th><th>类型</th><th>匹配值</th><th>动作</th><th>出口节点</th><th>操作</th></tr></thead>
             <tbody id="rulesBody"></tbody>
           </table>
           <div class="empty-tip" id="rulesEmpty">暂无规则，点击「添加」新建</div>
-        </div>
-
-        <div class="apply-bar">
-          <span style="font-size:13px;color:var(--text-2)">修改后点击「应用」保存到本地配置文件并热重载</span>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost" id="resetConfigBtn">重置</button>
-            <button class="btn btn-primary" id="applyConfigBtn">✓ 应用配置</button>
+          <div class="pager" id="rulesPager" style="display:none">
+            <span class="pager-meta" id="rulesPagerMeta"></span>
+            <button class="btn btn-ghost btn-sm" id="rulesPagerPrev">◀ 上一页</button>
+            <span id="rulesPagerPage"></span>
+            <button class="btn btn-ghost btn-sm" id="rulesPagerNext">下一页 ▶</button>
           </div>
         </div>
-      </div>
 
-      <!-- Logs -->
-      <div class="page" id="page-logs">
-        <div class="card">
-          <div class="sec-h">
-            <div class="sec-t"><span class="dot"></span>最近访问日志</div>
+      <!-- === 访问日志 === -->
+      <div class="section-head">访问日志</div>
+      <div class="card">
+        <div class="sec-h">
+          <div class="sec-t"><span class="dot"></span>最近访问日志</div>
+          <div style="display:flex;gap:6px">
+            <select class="form-control filter-select" id="logsLimit" style="min-width:110px;height:32px;padding:4px 8px;font-size:12.5px">
+              <option value="20">最近 20 条</option>
+              <option value="50">最近 50 条</option>
+              <option value="100">最近 100 条</option>
+              <option value="200">最近 200 条</option>
+            </select>
             <button class="btn btn-ghost btn-sm" id="refreshLogsBtn">↻ 刷新</button>
           </div>
-          <div id="logsList"><div class="empty-tip">加载中...</div></div>
         </div>
+        <div id="logsList"><div class="empty-tip">加载中...</div></div>
+      </div>
+    </div>
+
+    <div class="apply-bar">
+      <span style="font-size:13px;color:var(--text-2)">修改后点击「应用」保存到本地配置文件并热重载</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" id="resetConfigBtn">重置</button>
+        <button class="btn btn-primary" id="applyConfigBtn">✓ 应用配置</button>
       </div>
     </div>
   </div>
@@ -854,14 +884,19 @@ function renderHtml() {
   <div class="modal-overlay" id="upstreamModal">
     <div class="modal">
       <div class="modal-title" id="upstreamModalTitle">添加出口节点</div>
-      <div class="form-group"><label class="form-label">名称 *</label><input class="form-control" id="upName" placeholder="如: residential-01" /></div>
+      <div class="form-group"><label class="form-label">名称 *</label><input class="form-control" id="upName" placeholder="如: residential-US-01" /></div>
       <div class="form-group"><label class="form-label">代理 URL *</label><input class="form-control" id="upUrl" placeholder="socks5://user:pass@host:port" /></div>
-      <div style="font-size:12px;color:var(--text-3);margin-bottom:12px">默认会复用上面配置的全局前置跳板。只有这个出口节点需要单独前置链路时，才展开填写高级 via。</div>
+      <div class="grid-2" style="gap:12px">
+        <div class="form-group"><label class="form-label">到期时间</label><input class="form-control" id="upExpiresAt" type="date" /></div>
+        <div class="form-group"><label class="form-label">权重</label><input class="form-control" id="upWeight" type="number" value="1" min="1" /></div>
+      </div>
+      <div class="form-group"><label class="form-label">购买官网（方便续费）</label><input class="form-control" id="upVendorUrl" placeholder="如: https://vendor.com/dashboard" /></div>
+      <div class="form-group"><label class="form-label">备注</label><input class="form-control" id="upNote" maxlength="200" placeholder="如: 美国住宅 · 10GB/月 · 仅用于 claude.ai" /></div>
+      <div style="font-size:12px;color:var(--text-3);margin:-4px 0 12px">默认会复用上面配置的全局前置跳板。只有这个出口需要单独前置链路时，才展开「高级设置」。</div>
       <div class="form-group" style="margin-bottom:8px">
         <button type="button" class="btn btn-ghost btn-sm" id="toggleUpViaBtn">高级设置：单独 via</button>
       </div>
       <div class="form-group" id="upViaGroup" style="display:none"><label class="form-label">单独 via（可选）</label><input class="form-control" id="upVia" placeholder="如: socks5://entry-user:pass@host:port 或 http://host:port" /></div>
-      <div class="form-group"><label class="form-label">权重</label><input class="form-control" id="upWeight" type="number" value="1" min="1" /></div>
       <div class="form-group" style="display:flex;align-items:center;gap:12px">
         <label class="form-label" style="margin:0">启用</label>
         <label class="toggle"><input type="checkbox" id="upEnabled" checked /><span class="toggle-slider"></span></label>
@@ -912,25 +947,19 @@ let editUpIdx = -1;
 let overviewRefreshToken = 0;
 let lastNetDiagRenderKey = null;
 let upViaExpanded = false;
+const ruleFilter = { search: '', type: '', action: '', upstream: '', page: 1, pageSize: 20 };
 
-const pageTitles = {
-  overview: { title: '概览', sub: '实时查看链式代理编排状态与出口流量' },
-  config: { title: '链式代理编排', sub: '管理系统代理接管、前置跳板、出口节点与分流规则' },
-  logs: { title: '访问日志', sub: '查看最近的请求日志与实际出口结果' }
-};
-
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', () => {
-    const page = item.dataset.page;
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    item.classList.add('active');
-    document.getElementById('page-' + page).classList.add('active');
-    document.getElementById('pageTitle').textContent = pageTitles[page].title;
-    document.getElementById('pageSub').textContent = pageTitles[page].sub;
-    if (page === 'logs') loadLogs();
-  });
-});
+function updateTopbarStatus(running) {
+  const el = document.getElementById('sidebarStatus');
+  if (!el) return;
+  if (running === false) {
+    el.className = 'topbar-status danger';
+    el.innerHTML = '<span class="pulse"></span>服务异常';
+  } else {
+    el.className = 'topbar-status';
+    el.innerHTML = '<span class="pulse"></span>服务运行中';
+  }
+}
 
 function toast(msg, type = 'success') {
   const el = document.createElement('div');
@@ -953,6 +982,71 @@ function esc(s) {
 
 function maskUrl(url) {
   try { const u = new URL(url); if (u.password) u.password = '****'; return u.toString(); } catch { return url; }
+}
+
+function describeExpiry(iso) {
+  if (!iso) return { badgeCls: '', short: '', tooltip: '', days: null };
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { badgeCls: '', short: '', tooltip: '', days: null };
+  const now = new Date();
+  const ms = d.getTime() - now.getTime();
+  const days = Math.floor(ms / 86400000);
+  const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  if (days < 0) return { badgeCls: 'badge-red', short: '已过期', tooltip: '已于 ' + dateStr + ' 过期，请尽快续费', days };
+  if (days <= 3) return { badgeCls: 'badge-red', short: days === 0 ? '今日到期' : days + ' 天到期', tooltip: dateStr + ' 到期', days };
+  if (days <= 7) return { badgeCls: 'badge-amber', short: days + ' 天到期', tooltip: dateStr + ' 到期', days };
+  if (days <= 30) return { badgeCls: 'badge-blue', short: days + ' 天', tooltip: dateStr + ' 到期', days };
+  return { badgeCls: 'badge-gray', short: dateStr.slice(5), tooltip: dateStr + ' 到期', days };
+}
+
+function isoToDateInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+function dateInputToIso(value) {
+  const v = String(value || '').trim();
+  if (!v) return null;
+  const d = new Date(v + 'T23:59:59');
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function renderExpiryReminder() {
+  const wrap = document.getElementById('ovExpiryReminder');
+  if (!wrap) return;
+  const items = (cfg?.upstreams || [])
+    .map(u => ({ u, exp: describeExpiry(u.expiresAt) }))
+    .filter(({ exp }) => exp.days != null && exp.days <= 30)
+    .sort((a, b) => a.exp.days - b.exp.days);
+  if (!items.length) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  const critical = items.filter(({ exp }) => exp.days <= 7).length;
+  const hint = critical
+    ? '<strong style="color:var(--red)">' + critical + ' 个节点将在 7 天内到期</strong>，请抓紧续费：'
+    : items.length + ' 个节点将在 30 天内到期：';
+  wrap.innerHTML =
+    '<div class="card-h"><div class="card-title"><span class="dot" style="background:var(--amber)"></span>续费提醒</div></div>' +
+    '<div style="font-size:12.5px;color:var(--text-2);margin-bottom:10px">' + hint + '</div>' +
+    '<div class="expiry-list">' +
+    items.slice(0, 8).map(({ u, exp }) => {
+      const vendor = u.vendorUrl
+        ? '<a href="' + esc(u.vendorUrl) + '" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">去续费 ↗</a>'
+        : '<span class="badge badge-gray" title="未配置购买官网，无法一键跳转续费">未配购买官网</span>';
+      return '<div class="expiry-row">'
+        + '<div><strong>' + esc(u.name) + '</strong>'
+        + ' <span class="badge ' + exp.badgeCls + '">' + esc(exp.short) + '</span>'
+        + (u.note ? '<div style="font-size:12px;color:var(--text-3);margin-top:4px">' + esc(u.note) + '</div>' : '')
+        + '</div>'
+        + '<div>' + vendor + '</div>'
+        + '</div>';
+    }).join('') +
+    '</div>';
 }
 
 function formatConfigExportName() {
@@ -1146,41 +1240,45 @@ function renderEnvSettings() {
   document.getElementById('envNoProxy').value = current.NO_PROXY || '';
 }
 
-function summarizeSystemProxy(status) {
-  if (!status) {
-    return '暂未获取系统代理状态';
+function describeSysProxyBadge(status) {
+  if (!status) return { cls: 'badge-gray', text: '读取中' };
+  if (!status.supported) return { cls: 'badge-gray', text: '不支持' };
+  if (status.managed) return { cls: 'badge-green', text: '已接管' };
+  return { cls: 'badge-amber', text: '未接管' };
+}
+
+function formatSysEndpoint(item, fallback) {
+  if (item && item.enabled && item.host && item.port) {
+    return item.host + ':' + item.port;
   }
-  if (!status.supported) {
-    return '当前系统不支持接管（仅支持 macOS）';
-  }
-  if (status.managed) {
-    if (status.selectSource === 'default-route') {
-      return 'macOS 系统代理已接管到默认路由接口对应服务';
-    }
-    return 'macOS 系统代理当前已由 Roo 本地入口接管';
-  }
-  if (status.snapshot) {
-    return '当前未接管，但存在可恢复的系统代理快照';
-  }
-  return '当前仍使用系统原始代理配置，尚未由 Roo 接管';
+  if (fallback) return fallback;
+  return '未启用';
 }
 
 function renderSystemProxyStatus(status) {
   systemProxyStatus = status || null;
-  const summary = document.getElementById('sysProxySummary');
+  const badge = document.getElementById('sysProxyBadge');
   const detail = document.getElementById('sysProxyDetail');
+  const httpEl = document.getElementById('sysEndpointHttp');
+  const httpsEl = document.getElementById('sysEndpointHttps');
+  const socksEl = document.getElementById('sysEndpointSocks');
   const enableBtn = document.getElementById('enableSystemProxyBtn');
   const disableBtn = document.getElementById('disableSystemProxyBtn');
   const restoreBtn = document.getElementById('restoreSystemProxyBtn');
 
-  if (!summary || !detail || !enableBtn || !disableBtn || !restoreBtn) {
+  if (!badge || !detail || !httpEl || !httpsEl || !socksEl || !enableBtn || !disableBtn || !restoreBtn) {
     return;
   }
 
-  summary.textContent = summarizeSystemProxy(status);
+  const b = describeSysProxyBadge(status);
+  badge.className = 'badge ' + b.cls;
+  badge.innerHTML = '<span class="badge-dot"></span>' + esc(b.text);
 
   if (!status) {
-    detail.innerHTML = '<div>状态：未知</div>';
+    httpEl.textContent = '-';
+    httpsEl.textContent = '-';
+    socksEl.textContent = '-';
+    detail.innerHTML = '';
     enableBtn.disabled = false;
     disableBtn.disabled = false;
     restoreBtn.disabled = false;
@@ -1188,44 +1286,22 @@ function renderSystemProxyStatus(status) {
   }
 
   const current = status.current || {};
-  const serviceOrder = Array.isArray(status.serviceOrder) ? status.serviceOrder : [];
-  const sourceText = status.selectSource === 'default-route'
-    ? '按默认路由接口自动选择'
-    : status.selectSource === 'preferred'
-      ? '按显式配置指定'
-      : '按回退规则选择';
-  const defaultRouteText = status.defaultInterface
-    ? ('默认路由接口：' + status.defaultInterface)
-    : '默认路由接口：未识别';
+  const localFallback = status.managed ? (status.localEndpoint || '') : '';
+  httpEl.textContent = formatSysEndpoint(current.web, localFallback);
+  httpsEl.textContent = formatSysEndpoint(current.secureweb, localFallback);
+  socksEl.textContent = formatSysEndpoint(current.socksfirewall, localFallback);
+
   const serviceHint = status.device
     ? (status.service + ' (' + status.device + ')')
     : (status.service || '-');
-
-  const formatItem = (label, item) => {
-    const value = item && item.enabled ? ((item.host || '-') + ':' + (item.port || '-')) : '关闭';
-    return '<div><strong>' + esc(label) + '：</strong>' + esc(value) + '</div>';
-  };
-
-  const serviceMap = serviceOrder.length
-    ? ('<div style="margin-top:6px"><strong>服务映射：</strong>'
-      + serviceOrder.map((item) => {
-        const text = item.device
-          ? (item.service + ' (' + item.device + ')')
-          : item.service;
-        return '<span style="display:inline-block;margin-right:8px">' + esc(text) + '</span>';
-      }).join('')
-      + '</div>')
-    : '';
-
-  detail.innerHTML = [
-    '<div><strong>当前接管服务：</strong>' + esc(serviceHint) + '</div>',
-    '<div><strong>选择依据：</strong>' + esc(sourceText) + '</div>',
-    '<div><strong>' + esc(defaultRouteText) + '</strong></div>',
-    serviceMap,
-    '<div><strong>Roo 本地入口：</strong>' + esc(status.localEndpoint || '-') + '</div>',
-    '<div><strong>恢复快照：</strong>' + esc(status.snapshot?.savedAt ? new Date(status.snapshot.savedAt).toLocaleString('zh-CN') : '无') + '</div>',
-    '<div style="margin-top:6px">' + formatItem('HTTP', current.web) + formatItem('HTTPS', current.secureweb) + formatItem('SOCKS', current.socksfirewall) + '</div>'
-  ].join('');
+  const snapshotTime = status.snapshot?.savedAt
+    ? new Date(status.snapshot.savedAt).toLocaleString('zh-CN')
+    : null;
+  const parts = ['<strong>目标服务</strong> ' + esc(serviceHint)];
+  if (snapshotTime) {
+    parts.push('<strong>恢复快照</strong> ' + esc(snapshotTime));
+  }
+  detail.innerHTML = parts.join(' &nbsp;·&nbsp; ');
 
   const unsupported = status.supported === false;
   enableBtn.disabled = unsupported || Boolean(status.managed);
@@ -1239,10 +1315,8 @@ async function loadSystemProxyStatus() {
     renderSystemProxyStatus(status);
   } catch (e) {
     renderSystemProxyStatus(null);
-    const summary = document.getElementById('sysProxySummary');
     const detail = document.getElementById('sysProxyDetail');
-    if (summary) summary.textContent = '读取系统代理状态失败';
-    if (detail) detail.innerHTML = '<div style="color:var(--red)">错误：' + esc(e.message) + '</div>';
+    if (detail) detail.innerHTML = '<span style="color:var(--red)">读取失败：' + esc(e.message) + '</span>';
   }
 }
 
@@ -1337,7 +1411,7 @@ async function loadOverview() {
 
     lastStatus = status;
     renderOverview(status);
-    document.getElementById('sidebarStatus').textContent = '服务运行中';
+    updateTopbarStatus(status.running !== false);
 
     refreshNetworkDiagnostics(token);
   } catch (e) {
@@ -1346,7 +1420,7 @@ async function loadOverview() {
     }
 
     document.getElementById('ovStatus').textContent = '离线';
-    document.getElementById('sidebarStatus').textContent = '服务异常';
+    updateTopbarStatus(false);
     setNetDiagError('服务状态获取失败，暂无法刷新网络诊断');
   }
 }
@@ -1423,11 +1497,23 @@ function renderConfig() {
   ups.forEach((u, i) => {
     let proto = '-'; try { proto = new URL(u.url).protocol.replace(':', ''); } catch {}
     const tr = document.createElement('tr');
+    const viaTag = u.via
+      ? ' <span class="badge badge-purple" title="单独 via: ' + esc(maskUrl(u.via)) + '">via</span>'
+      : '';
+    const exp = describeExpiry(u.expiresAt);
+    const expTag = exp.badgeCls
+      ? ' <span class="badge ' + exp.badgeCls + '" title="' + esc(exp.tooltip) + '">' + esc(exp.short) + '</span>'
+      : '';
+    const noteTag = u.note
+      ? ' <span class="badge badge-gray" title="' + esc(u.note) + '">备注</span>'
+      : '';
+    const vendorTag = u.vendorUrl
+      ? ' <a href="' + esc(u.vendorUrl) + '" target="_blank" rel="noopener" class="badge badge-blue" title="前往续费：' + esc(u.vendorUrl) + '">续费 ↗</a>'
+      : '';
     tr.innerHTML =
-      '<td><strong>' + esc(u.name) + '</strong></td>' +
+      '<td><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><strong>' + esc(u.name) + '</strong>' + viaTag + expTag + noteTag + vendorTag + '</div></td>' +
       '<td><span class="badge badge-blue">' + esc(proto) + '</span></td>' +
       '<td><span class="url-text" title="' + esc(maskUrl(u.url)) + '">' + esc(maskUrl(u.url)) + '</span></td>' +
-      '<td><span class="url-text" title="' + esc(u.via ? maskUrl(u.via) : '-') + '">' + esc(u.via ? maskUrl(u.via) : '-') + '</span></td>' +
       '<td>' + u.weight + '</td>' +
       '<td><span class="badge ' + (u.enabled !== false ? 'badge-green' : 'badge-gray') + '"><span class="badge-dot"></span>' + (u.enabled !== false ? '启用' : '禁用') + '</span></td>' +
       '<td style="white-space:nowrap">' +
@@ -1436,13 +1522,80 @@ function renderConfig() {
       '</td>';
     upBody.appendChild(tr);
   });
+  renderExpiryReminder();
 
-  const rules = cfg.rules || [];
+  renderRulesUpstreamFilterOptions();
+  renderRules();
+}
+
+function renderRulesUpstreamFilterOptions() {
+  const sel = document.getElementById('ruleFilterUpstream');
+  if (!sel) return;
+  const current = sel.value;
+  const names = (cfg?.upstreams || []).map(u => u.name);
+  sel.innerHTML = '<option value="">全部出口</option>'
+    + '<option value="__direct__">直连 / 无出口</option>'
+    + names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+  sel.value = names.includes(current) || current === '__direct__' || current === '' ? current : '';
+}
+
+function matchRuleFilter(r) {
+  const f = ruleFilter;
+  if (f.type && r.type !== f.type) return false;
+  if (f.action && r.action !== f.action) return false;
+  if (f.upstream) {
+    const ups = r.upstreams || [];
+    if (f.upstream === '__direct__') {
+      if (ups.length) return false;
+    } else if (!ups.includes(f.upstream)) {
+      return false;
+    }
+  }
+  if (f.search) {
+    const q = f.search.toLowerCase();
+    const hay = [r.value, r.type, r.action, (r.upstreams || []).join(',')].join(' ').toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function renderRules() {
+  const rules = cfg?.rules || [];
+  const filtered = rules.map((r, i) => ({ r, i })).filter(x => matchRuleFilter(x.r));
+  const total = filtered.length;
+  const pageSize = ruleFilter.pageSize > 0 ? ruleFilter.pageSize : 20;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (ruleFilter.page > totalPages) ruleFilter.page = totalPages;
+  if (ruleFilter.page < 1) ruleFilter.page = 1;
+  const start = (ruleFilter.page - 1) * pageSize;
+  const pageRows = filtered.slice(start, start + pageSize);
+
   const rb = document.getElementById('rulesBody');
+  const table = document.getElementById('rulesTable');
+  const empty = document.getElementById('rulesEmpty');
+  const pager = document.getElementById('rulesPager');
+  const pagerMeta = document.getElementById('rulesPagerMeta');
+  const pagerPage = document.getElementById('rulesPagerPage');
+
   rb.innerHTML = '';
-  document.getElementById('rulesTable').style.display = rules.length ? '' : 'none';
-  document.getElementById('rulesEmpty').style.display = rules.length ? 'none' : '';
-  rules.forEach((r, i) => {
+  if (!rules.length) {
+    table.style.display = 'none';
+    empty.style.display = '';
+    empty.textContent = '暂无规则，点击「添加」新建';
+    pager.style.display = 'none';
+    return;
+  }
+  if (!total) {
+    table.style.display = 'none';
+    empty.style.display = '';
+    empty.textContent = '当前筛选条件下没有匹配的规则';
+    pager.style.display = 'none';
+    return;
+  }
+
+  table.style.display = '';
+  empty.style.display = 'none';
+  pageRows.forEach(({ r, i }) => {
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td style="color:var(--text-3);font-size:12px">' + (i + 1) + '</td>' +
@@ -1456,6 +1609,12 @@ function renderConfig() {
       '</td>';
     rb.appendChild(tr);
   });
+
+  pager.style.display = total > pageSize ? '' : 'none';
+  pagerMeta.textContent = '共 ' + total + ' 条（总规则 ' + rules.length + '）';
+  pagerPage.textContent = ruleFilter.page + ' / ' + totalPages;
+  document.getElementById('rulesPagerPrev').disabled = ruleFilter.page <= 1;
+  document.getElementById('rulesPagerNext').disabled = ruleFilter.page >= totalPages;
 }
 
 
@@ -1537,6 +1696,47 @@ document.getElementById('toggleUpViaBtn').addEventListener('click', () => {
 document.getElementById('cfgStrategy').addEventListener('change', e => { if (cfg) cfg.balance_strategy = e.target.value; });
 document.getElementById('cfgDefaultRoute').addEventListener('change', e => { if (cfg) cfg.default_route = { action: e.target.value, upstreams: [] }; });
 
+// ---- Rule filter / pagination ----
+function bindRuleFilterEvents() {
+  const search = document.getElementById('ruleFilterSearch');
+  const typeSel = document.getElementById('ruleFilterType');
+  const actionSel = document.getElementById('ruleFilterAction');
+  const upstreamSel = document.getElementById('ruleFilterUpstream');
+  const pageSizeSel = document.getElementById('ruleFilterPageSize');
+  const reset = document.getElementById('ruleFilterReset');
+  const prev = document.getElementById('rulesPagerPrev');
+  const next = document.getElementById('rulesPagerNext');
+
+  let searchTimer = null;
+  search.addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      ruleFilter.search = e.target.value.trim();
+      ruleFilter.page = 1;
+      renderRules();
+    }, 120);
+  });
+  typeSel.addEventListener('change', (e) => { ruleFilter.type = e.target.value; ruleFilter.page = 1; renderRules(); });
+  actionSel.addEventListener('change', (e) => { ruleFilter.action = e.target.value; ruleFilter.page = 1; renderRules(); });
+  upstreamSel.addEventListener('change', (e) => { ruleFilter.upstream = e.target.value; ruleFilter.page = 1; renderRules(); });
+  pageSizeSel.addEventListener('change', (e) => { ruleFilter.pageSize = parseInt(e.target.value, 10) || 20; ruleFilter.page = 1; renderRules(); });
+  reset.addEventListener('click', () => {
+    ruleFilter.search = '';
+    ruleFilter.type = '';
+    ruleFilter.action = '';
+    ruleFilter.upstream = '';
+    ruleFilter.page = 1;
+    search.value = '';
+    typeSel.value = '';
+    actionSel.value = '';
+    upstreamSel.value = '';
+    renderRules();
+  });
+  prev.addEventListener('click', () => { if (ruleFilter.page > 1) { ruleFilter.page--; renderRules(); } });
+  next.addEventListener('click', () => { ruleFilter.page++; renderRules(); });
+}
+bindRuleFilterEvents();
+
 // ---- Upstream CRUD ----
 
 document.getElementById('addUpstreamBtn').addEventListener('click', () => {
@@ -1548,6 +1748,10 @@ document.getElementById('addUpstreamBtn').addEventListener('click', () => {
   document.getElementById('upUrl').value = '';
   document.getElementById('upVia').value = '';
   document.getElementById('upWeight').value = '1';
+  document.getElementById('upNote').value = '';
+  document.getElementById('upExpiresAt').value = '';
+  document.getElementById('upVendorUrl').value = '';
+  document.getElementById('upEnabled').checked = true;
   document.getElementById('upstreamModal').classList.add('open');
 });
 
@@ -1561,6 +1765,9 @@ window.editUpstream = i => {
   document.getElementById('upUrl').value = u.url;
   document.getElementById('upVia').value = u.via || '';
   document.getElementById('upWeight').value = u.weight;
+  document.getElementById('upNote').value = u.note || '';
+  document.getElementById('upExpiresAt').value = isoToDateInput(u.expiresAt);
+  document.getElementById('upVendorUrl').value = u.vendorUrl || '';
   document.getElementById('upEnabled').checked = u.enabled !== false;
   document.getElementById('upstreamModal').classList.add('open');
 };
@@ -1581,8 +1788,15 @@ document.getElementById('upSaveBtn').addEventListener('click', () => {
   const via = document.getElementById('upVia').value.trim();
   const weight = parseInt(document.getElementById('upWeight').value) || 1;
   const enabled = document.getElementById('upEnabled').checked;
+  const note = document.getElementById('upNote').value.trim().slice(0, 200);
+  const expiresAt = dateInputToIso(document.getElementById('upExpiresAt').value);
+  const vendorUrl = document.getElementById('upVendorUrl').value.trim() || null;
   if (!name || !url) { toast('名称和 URL 不能为空', 'error'); return; }
-  const entry = { name, url, via: via || null, weight, enabled };
+  if (vendorUrl && !/^https?:\/\//i.test(vendorUrl)) {
+    toast('购买官网必须以 http:// 或 https:// 开头', 'error');
+    return;
+  }
+  const entry = { name, url, via: via || null, weight, enabled, note, expiresAt, vendorUrl };
   if (editUpIdx >= 0) {
     const oldName = cfg.upstreams[editUpIdx].name;
     cfg.upstreams[editUpIdx] = entry;
@@ -1745,7 +1959,9 @@ document.getElementById('resetConfigBtn').addEventListener('click', () => {
 // ---- Logs ----
 async function loadLogs() {
   try {
-    const logs = await api('/logs?n=80');
+    const limitSel = document.getElementById('logsLimit');
+    const limit = limitSel ? (parseInt(limitSel.value, 10) || 50) : 50;
+    const logs = await api('/logs?n=' + limit);
     const box = document.getElementById('logsList');
     if (!logs.length) { box.innerHTML = '<div class="empty-tip">暂无日志</div>'; return; }
     box.innerHTML = '<table><thead><tr><th style="width:150px">时间</th><th style="width:70px">类型</th><th>内容</th><th style="width:90px">状态</th><th style="width:90px">耗时</th></tr></thead><tbody>' +
@@ -1788,6 +2004,7 @@ async function loadLogs() {
   }
 }
 document.getElementById('refreshLogsBtn').addEventListener('click', loadLogs);
+document.getElementById('logsLimit').addEventListener('change', loadLogs);
 
 document.getElementById('reloadRulesBtn').addEventListener('click', async () => {
   const btn = document.getElementById('reloadRulesBtn');
@@ -1827,10 +2044,12 @@ async function init() {
     toast('加载配置失败：' + e.message, 'error');
   }
   renderUpViaGroup();
+  loadLogs();
 }
 
 init();
 setInterval(loadOverview, 15000);
+setInterval(loadLogs, 30000);
 </script>
 </body>
 </html>`;

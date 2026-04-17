@@ -233,7 +233,10 @@ fi
 if pm2 startup >/dev/null 2>&1; then
   print_line "pm2 startup 已完成。"
 else
-  print_line "pm2 startup 执行失败，通常是权限不足。你可以稍后手动执行 pm2 startup。"
+  print_line "pm2 startup 执行失败（macOS 通常需要 sudo）。"
+  print_line "如果不想用 sudo，可改用无 sudo 的 LaunchAgent 方案（推荐 macOS 用户）："
+  print_line "  bash $ROOT_DIR/scripts/install-autostart.sh"
+  print_line "该脚本会在 ~/Library/LaunchAgents/ 下注册 Roo，登录后自动启动、崩溃自动拉起。"
 fi
 
 print_line "========================================"

@@ -341,6 +341,35 @@ function normalizeRule(rule, index, upstreamNameSet) {
   };
 }
 
+function normalizeOptionalDate(value, label) {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} 的日期格式不正确（应为 ISO 日期字符串，如 2026-06-01）`);
+  }
+  return date.toISOString();
+}
+
+function normalizeOptionalUrl(value, label) {
+  if (value == null || value === '') return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error(`${label} 仅支持 http / https 链接`);
+    }
+    return parsed.toString();
+  } catch (error) {
+    if (error.code === 'ERR_INVALID_URL') {
+      throw new Error(`${label} 链接格式不正确`);
+    }
+    throw error;
+  }
+}
+
 function normalizeUpstream(upstream, index = 0) {
   if (!upstream || typeof upstream !== 'object') {
     throw new Error(`第 ${index + 1} 个 upstream 配置无效`);
@@ -351,6 +380,9 @@ function normalizeUpstream(upstream, index = 0) {
   const weight = Number.parseInt(upstream.weight, 10);
   const enabled = upstream.enabled !== false;
   const via = upstream.via == null ? null : String(upstream.via).trim();
+  const note = upstream.note == null ? '' : String(upstream.note).trim().slice(0, 500);
+  const expiresAt = normalizeOptionalDate(upstream.expiresAt, `upstream ${name || index + 1} 的 expiresAt`);
+  const vendorUrl = normalizeOptionalUrl(upstream.vendorUrl, `upstream ${name || index + 1} 的 vendorUrl`);
 
   if (!name) {
     throw new Error(`第 ${index + 1} 个 upstream 缺少名称 name`);
@@ -390,6 +422,9 @@ function normalizeUpstream(upstream, index = 0) {
     via: parsedViaUrl ? parsedViaUrl.toString() : null,
     weight: Number.isFinite(weight) && weight > 0 ? weight : 1,
     enabled,
+    note,
+    expiresAt,
+    vendorUrl,
   };
 }
 

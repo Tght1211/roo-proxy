@@ -113,11 +113,9 @@ async function bootstrap() {
     await logger.error('配置刷新失败，已继续使用当前配置', { error: error.message });
   });
 
-  if (!configManager.startAutoRefresh(async (error) => {
+  configManager.startAutoRefresh(async (error) => {
     await logger.error('定时刷新配置失败', { error: error.message });
-  }) && !isRemoteConfigEnabled(settings)) {
-    await logger.info('未配置 Gist 自动刷新，当前使用本地配置或静态配置源');
-  }
+  });
 
   // ProxyChain handles HTTP/HTTPS CONNECT on a random internal port.
   const proxyServer = createProxyServer({
