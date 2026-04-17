@@ -1,6 +1,6 @@
 {
   "name": "roo",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Roo 个人代理管理系统",
   "main": "server/index.js",
   "bin": {

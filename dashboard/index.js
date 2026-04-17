@@ -267,13 +267,28 @@ async function probeUpstreamConnectivity(upstream, chainManager, envProxy) {
   }
 }
 
+async function probeRelayProxy(envProxy) {
+  if (!envProxy) {
+    return { configured: false, ok: null, ip: null, error: null, latencyMs: null };
+  }
+  const t0 = Date.now();
+  try {
+    const ip = await fetchIpByCurl(['-sS', '--max-time', '8', '--proxy', envProxy, 'https://api.ip.sb/ip']);
+    if (!ip) throw new Error('返回为空');
+    return { configured: true, ok: true, ip, error: null, latencyMs: Date.now() - t0 };
+  } catch (error) {
+    return { configured: true, ok: false, ip: null, error: formatProbeError(error), latencyMs: Date.now() - t0 };
+  }
+}
+
 async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
   const envProxy = process.env.ALL_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || null;
 
-  const [directIpResult, envProxyIpResult, rooRouteIpResult] = await Promise.allSettled([
-    fetchIpByCurl(['-s', '--noproxy', '*', 'https://api.ip.sb/ip']),
-    envProxy ? fetchIpByCurl(['-s', 'https://api.ip.sb/ip']) : Promise.resolve(null),
-    fetchIpByCurl(['-s', '--proxy', `http://127.0.0.1:${localProxyPort}`, 'https://api.ip.sb/ip']),
+  const [directIpResult, envProxyIpResult, rooRouteIpResult, relayProbe] = await Promise.all([
+    Promise.allSettled([fetchIpByCurl(['-s', '--noproxy', '*', 'https://api.ip.sb/ip'])]).then(([r]) => r),
+    Promise.allSettled([envProxy ? fetchIpByCurl(['-s', 'https://api.ip.sb/ip']) : Promise.resolve(null)]).then(([r]) => r),
+    Promise.allSettled([fetchIpByCurl(['-s', '--proxy', `http://127.0.0.1:${localProxyPort}`, 'https://api.ip.sb/ip'])]).then(([r]) => r),
+    probeRelayProxy(envProxy),
   ]);
 
   const directIp = directIpResult.status === 'fulfilled' ? directIpResult.value : null;
@@ -327,8 +342,16 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
     rooProxyMeta = await lookupIpMeta(rooProxyIp);
   }
 
+  // 探测结果元数据
+  const relayMeta = relayProbe.ok && relayProbe.ip ? await lookupIpMeta(relayProbe.ip) : null;
+
   let routeHint;
-  if (upstreamCheckSummary.failed > 0) {
+  // 优先级最高：如果前置代理自己挂了，出口失败很可能是被它拖累的，提示归因到前置
+  if (relayProbe.configured && relayProbe.ok === false && upstreamCheckSummary.failed > 0) {
+    routeHint = `前置代理 ${envProxy} 自身探测失败（${relayProbe.error}），${upstreamCheckSummary.failed} 个出口节点异常很可能是被前置代理拖累——请先恢复前置代理，再回来重新检查节点。`;
+  } else if (relayProbe.configured && relayProbe.ok === false) {
+    routeHint = `前置代理 ${envProxy} 自身探测失败：${relayProbe.error}。这会导致所有需要走前置的出口节点都无法访问。`;
+  } else if (upstreamCheckSummary.failed > 0) {
     const firstFailed = upstreamChecks.find((item) => !item.ok);
     routeHint = `检测到 ${upstreamCheckSummary.failed} 个出口节点探测失败。${formatUpstreamFailureHint(firstFailed)}`;
   } else if (rooProbeMode === 'upstream-probe') {
@@ -357,6 +380,7 @@ async function getNetworkDiagnostics(localProxyPort, balancer, chainManager) {
     routeHint,
     upstreamCheckSummary,
     upstreamChecks,
+    relayProbe: { ...relayProbe, meta: relayMeta },
   };
 }
 
@@ -1380,6 +1404,21 @@ function buildNetDiagSummary(netDiag = {}) {
   const failedChecks = Array.isArray(netDiag.upstreamChecks)
     ? netDiag.upstreamChecks.filter((item) => !item.ok)
     : [];
+  const relay = netDiag.relayProbe;
+
+  // 前置代理自己挂了：这是头号问题，所有依赖前置的节点都会连带异常
+  if (relay && relay.configured && relay.ok === false) {
+    return {
+      tone: 'danger',
+      badge: '前置异常',
+      title: '前置代理自身探测失败',
+      desc: '前置代理 ' + esc(netDiag.envProxy || '') + ' 无法访问外网（' + esc(relay.error || '未知错误') + '）。',
+      meta: summary.failed > 0
+        ? '所有需要走前置的出口节点都会连带异常（当前已有 ' + summary.failed + ' 个异常），先恢复前置再查节点。'
+        : '所有需要走前置的出口节点都会受影响。',
+      actions: ['检查前置代理', '确认 shell 中的 HTTP_PROXY/ALL_PROXY 指向可用服务'],
+    };
+  }
 
   if (summary.failed > 0) {
     const failedNames = failedChecks.slice(0, 2).map((item) => item.name).filter(Boolean);
@@ -1464,15 +1503,50 @@ function updateOverviewSummary(netDiag) {
 }
 
 
+function renderRelayBlock(netDiag) {
+  const envProxy = netDiag.envProxy;
+  const relay = netDiag.relayProbe || { configured: false };
+  if (!envProxy && !relay.configured) {
+    return '<div class="diag-block">'
+      + '<div class="diag-caption" style="display:flex;justify-content:space-between;align-items:center">'
+        + '<span>前置代理</span>'
+        + '<span class="badge badge-gray"><span class="badge-dot"></span>未配置</span>'
+      + '</div>'
+      + '<div class="diag-text">未设置</div>'
+      + '</div>';
+  }
+  let badgeCls, badgeTxt, extra = '';
+  if (relay.ok === true) {
+    badgeCls = 'badge-green'; badgeTxt = '正常';
+    const ipLine = relay.meta ? formatIpMeta(relay.meta) : (relay.ip || '');
+    const latency = relay.latencyMs != null ? (relay.latencyMs + ' ms') : '';
+    extra = '<div class="diag-text" style="margin-top:6px;font-size:12px;color:var(--text-2)">前置出口：' + esc(ipLine) + (latency ? ' · ' + esc(latency) : '') + '</div>';
+  } else if (relay.ok === false) {
+    badgeCls = 'badge-red'; badgeTxt = '异常';
+    extra = '<div class="diag-text" style="margin-top:6px;font-size:12px;color:var(--red)">探测失败：' + esc(relay.error || '未知错误') + '</div>';
+  } else {
+    badgeCls = 'badge-gray'; badgeTxt = '未检测';
+  }
+  return '<div class="diag-block' + (relay.ok === false ? ' bad' : '') + '">'
+    + '<div class="diag-caption" style="display:flex;justify-content:space-between;align-items:center">'
+      + '<span>前置代理</span>'
+      + '<span class="badge ' + badgeCls + '"><span class="badge-dot"></span>' + esc(badgeTxt) + '</span>'
+    + '</div>'
+    + '<div class="diag-text">' + esc(envProxy) + '</div>'
+    + extra
+    + '</div>';
+}
+
 function renderNetDiag(netDiag) {
   const summary = netDiag.upstreamCheckSummary || { totalEnabled: 0, checked: 0, ok: 0, failed: 0, skipped: 0 };
   const checks = Array.isArray(netDiag.upstreamChecks) ? netDiag.upstreamChecks : [];
-  const failedChecks = checks.filter((item) => !item.ok).slice(0, 2);
+  const failedChecks = checks.filter((item) => !item.ok).slice(0, 3);
+  const relay = netDiag.relayProbe || { configured: false };
+  const relayDown = relay.configured && relay.ok === false;
   const currentEgress = netDiag.rooProbeUpstream
     ? ('当前出口节点：' + netDiag.rooProbeUpstream)
     : '当前出口：经 Roo';
   const currentEgressValue = getDiagValue(netDiag.rooProxyMeta, netDiag.rooProxyIp);
-  const relayStatus = netDiag.envProxy ? esc(netDiag.envProxy) : '未设置';
 
   return [
     '<div class="section-stack">',
@@ -1480,10 +1554,7 @@ function renderNetDiag(netDiag) {
         '<div class="diag-panel">',
           '<div class="diag-title">当前路径</div>',
           '<div class="diag-list">',
-            '<div class="diag-block">',
-              '<div class="diag-caption">前置代理</div>',
-              '<div class="diag-text">' + relayStatus + '</div>',
-            '</div>',
+            renderRelayBlock(netDiag),
             '<div class="diag-block">',
               '<div class="diag-caption">' + esc(currentEgress) + '</div>',
               '<div class="diag-text">' + esc(currentEgressValue) + '</div>',
@@ -1498,17 +1569,24 @@ function renderNetDiag(netDiag) {
             '<div class="diag-stat"><div class="diag-stat-label">正常</div><div class="diag-stat-value">' + esc(String(summary.ok || 0)) + '</div></div>',
             '<div class="diag-stat"><div class="diag-stat-label">异常</div><div class="diag-stat-value">' + esc(String(summary.failed || 0)) + '</div></div>',
           '</div>',
+          relayDown && summary.failed > 0
+            ? '<div class="diag-note diag-note-warning" style="margin-bottom:8px">⚠ 前置代理异常，下方节点故障很可能是被前置拖累，先修复前置后再判断节点真实状态。</div>'
+            : '',
           failedChecks.length
             ? ('<div class="diag-list">'
-                + failedChecks.map((item) =>
-                  '<div class="diag-block bad">'
+                + failedChecks.map((item) => {
+                  const viaRelay = item.probeMode === 'via-chain' || item.probeMode === 'env-proxy';
+                  const blameTag = relayDown && viaRelay
+                    ? '<span class="badge badge-amber" style="margin-left:6px" title="该节点依赖前置代理，前置代理已异常">疑似前置拖累</span>'
+                    : '';
+                  return '<div class="diag-block bad">'
                     + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
-                      + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + esc(item.name) + '</div>'
+                      + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + esc(item.name) + blameTag + '</div>'
                       + '<span class="badge badge-red"><span class="badge-dot"></span>异常</span>'
                     + '</div>'
                     + '<div class="diag-text" style="margin-top:6px;font-size:12px;color:var(--text-2)">' + esc(item.error || '连接失败') + '</div>'
-                  + '</div>'
-                ).join('')
+                  + '</div>';
+                }).join('')
               + '</div>')
             : '<div class="diag-note diag-note-success">未发现出口异常。</div>',
         '</div>',
