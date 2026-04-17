@@ -18,6 +18,30 @@ test('matchRule prefers exact domain over suffix and keyword', () => {
   });
 });
 
+test('resolveRoute short-circuits to direct when traffic_mode=direct', async () => {
+  const route = await resolveRoute('any.example.org', {
+    traffic_mode: 'direct',
+    rules: [{ type: 'domain-suffix', value: 'example.org', action: 'proxy', upstreams: ['vpn'] }],
+    default_route: { action: 'proxy', upstreams: ['vpn'] },
+  });
+  assert.equal(route.source, 'mode-direct');
+  assert.equal(route.action, 'direct');
+  assert.deepEqual(route.upstreams, []);
+  assert.equal(route.rule, null);
+});
+
+test('resolveRoute short-circuits to global proxy when traffic_mode=global', async () => {
+  const route = await resolveRoute('any.example.org', {
+    traffic_mode: 'global',
+    rules: [{ type: 'domain-suffix', value: 'example.org', action: 'direct', upstreams: [] }],
+    default_route: { action: 'direct', upstreams: [] },
+  });
+  assert.equal(route.source, 'mode-global');
+  assert.equal(route.action, 'proxy');
+  assert.deepEqual(route.upstreams, []);
+  assert.equal(route.rule, null);
+});
+
 test('resolveRoute falls back to default route when no rule matches', async () => {
   const route = await resolveRoute('example.org', {
     default_route: {

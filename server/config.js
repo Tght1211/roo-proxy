@@ -11,6 +11,7 @@ const DEFAULT_CONFIG_FILE_NAME = 'roo-config.json';
 const DEFAULT_LOCAL_CONFIG_RELATIVE_PATH = path.join('data', 'roo-config.json');
 const SUPPORTED_CONFIG_SOURCES = new Set(['gist', 'local']);
 const SUPPORTED_STRATEGIES = new Set(['round-robin', 'random', 'weighted']);
+const SUPPORTED_TRAFFIC_MODES = new Set(['rule', 'global', 'direct']);
 const SUPPORTED_PROTOCOLS = new Set(['http:', 'https:', 'socks:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:']);
 const SUPPORTED_RULE_TYPES = new Set([
   'domain-suffix',
@@ -112,6 +113,7 @@ function getConfigMeta(settings = getSettings()) {
 function getDefaultConfig() {
   return {
     balance_strategy: 'round-robin',
+    traffic_mode: 'rule',
     default_route: {
       action: 'direct',
       upstreams: [],
@@ -119,6 +121,11 @@ function getDefaultConfig() {
     upstreams: [],
     rules: [],
   };
+}
+
+function normalizeTrafficMode(value) {
+  const v = String(value == null ? 'rule' : value).trim().toLowerCase();
+  return SUPPORTED_TRAFFIC_MODES.has(v) ? v : 'rule';
 }
 
 function normalizeDomain(rule) {
@@ -467,6 +474,7 @@ function normalizeConfig(rawConfig) {
 
   return {
     balance_strategy: balanceStrategy,
+    traffic_mode: normalizeTrafficMode(input.traffic_mode),
     default_route: defaultRoute,
     upstreams,
     rules,

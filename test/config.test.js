@@ -144,6 +144,7 @@ test('normalizeConfig rejects duplicate upstream names from imported config', ()
 test('getDefaultConfig defaults to direct routing for unmatched traffic', () => {
   assert.deepEqual(getDefaultConfig(), {
     balance_strategy: 'round-robin',
+    traffic_mode: 'rule',
     default_route: {
       action: 'direct',
       upstreams: [],

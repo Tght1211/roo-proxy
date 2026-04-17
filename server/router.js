@@ -303,6 +303,17 @@ function matchRule(hostname, rules = []) {
 async function resolveRoute(hostname, config = {}, options = {}) {
   const rules = Array.isArray(config.rules) ? config.rules : [];
   const context = await buildMatchContext(hostname, rules, options);
+
+  // 流量模式短路：global/direct 直接绕开规则匹配
+  const mode = typeof config.traffic_mode === 'string' ? config.traffic_mode : 'rule';
+  if (mode === 'direct') {
+    return { source: 'mode-direct', rule: null, action: 'direct', upstreams: [], context };
+  }
+  if (mode === 'global') {
+    return { source: 'mode-global', rule: null, action: 'proxy', upstreams: [], context };
+  }
+
+  // rule 模式（默认）：按规则匹配
   let matchedRule = null;
   let matchedScore = 0;
 

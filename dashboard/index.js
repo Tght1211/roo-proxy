@@ -781,6 +781,36 @@ function renderHtml() {
     .sys-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
     @media (max-width:720px){.sys-endpoints{grid-template-columns:1fr}}
 
+    /* ---- Mode switch (traffic_mode) ---- */
+    .mode-switch{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+    .mode-btn{
+      text-align:left;padding:14px 16px;background:var(--panel-2);
+      border:1px solid var(--border);color:var(--text-2);cursor:pointer;transition:all .18s;
+      font-family:inherit;position:relative;overflow:hidden;border-radius:var(--radius-lg);
+      display:flex;flex-direction:column;gap:4px;
+    }
+    .mode-btn::before{
+      content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+      background:var(--border);transition:all .18s;
+    }
+    .mode-btn:hover{color:var(--text);border-color:var(--cyan-dim)}
+    .mode-btn:hover::before{background:var(--cyan-dim)}
+    .mode-btn.active{color:var(--text);border-color:var(--cyan);background:var(--cyan-soft)}
+    .mode-btn.active::before{background:var(--cyan);box-shadow:0 0 10px var(--cyan-glow)}
+    .mode-btn[data-mode=global].active{border-color:var(--magenta);background:var(--magenta-soft)}
+    .mode-btn[data-mode=global].active::before{background:var(--magenta);box-shadow:0 0 10px var(--magenta-glow)}
+    .mode-btn[data-mode=direct].active{border-color:var(--yellow-dim);background:var(--yellow-soft)}
+    .mode-btn[data-mode=direct].active::before{background:var(--yellow);box-shadow:0 0 10px var(--yellow-glow)}
+    .mode-btn-title{font-weight:700;font-size:13px;color:var(--text);letter-spacing:.04em;font-family:var(--mono)}
+    .mode-btn-desc{font-size:11.5px;color:var(--text-3);line-height:1.5}
+    .mode-btn.active .mode-btn-title{color:var(--cyan)}
+    .mode-btn[data-mode=global].active .mode-btn-title{color:var(--magenta)}
+    .mode-btn[data-mode=direct].active .mode-btn-title{color:var(--yellow)}
+    .mode-hint{font-size:11.5px;color:var(--text-3);margin-top:2px;font-family:var(--mono);letter-spacing:.04em}
+    .mode-hint::before{content:'// ';color:var(--cyan);opacity:.7}
+    #rulesCard.dimmed{opacity:.55;pointer-events:none;filter:saturate(.3)}
+    @media (max-width:780px){.mode-switch{grid-template-columns:1fr}}
+
     /* ---- Filter bar ---- */
     .filter-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
     .filter-bar .form-control{height:32px;padding:5px 10px;font-size:12px}
@@ -1005,12 +1035,32 @@ function renderHtml() {
 
         <!-- ========== PAGE: RULES (分流规则) ========== -->
         <div class="page" id="page-rules">
+
         <div class="card">
+          <div class="card-h"><div class="card-title"><span class="dot"></span>TRAFFIC MODE · 流量模式</div></div>
+          <div class="mode-switch">
+            <button class="mode-btn active" data-mode="rule">
+              <span class="mode-btn-title">规则模式</span>
+              <span class="mode-btn-desc">命中规则走代理 / 直连，未命中走默认（和下方规则一致）</span>
+            </button>
+            <button class="mode-btn" data-mode="global">
+              <span class="mode-btn-title">全局代理</span>
+              <span class="mode-btn-desc">所有流量都走出口节点池（忽略下方规则）</span>
+            </button>
+            <button class="mode-btn" data-mode="direct">
+              <span class="mode-btn-title">直连模式</span>
+              <span class="mode-btn-desc">所有流量直连，不走任何出口（忽略下方规则）</span>
+            </button>
+          </div>
+          <div class="mode-hint" id="modeHint"></div>
+        </div>
+
+        <div class="card" id="rulesCard">
           <div class="sec-h">
             <div class="sec-t"><span class="dot"></span>分流规则</div>
             <button class="btn btn-primary btn-sm" id="addRuleBtn">+ 添加规则</button>
           </div>
-          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">规则决定流量是直连，还是进入某个出口节点池；表格靠上的规则优先命中。</div>
+          <div style="font-size:12px;color:var(--text-3);margin-bottom:10px">规则决定流量是直连，还是进入某个出口节点池；表格靠上的规则优先命中。仅在「规则模式」下生效。</div>
           <div class="filter-bar">
             <input class="form-control filter-search" id="ruleFilterSearch" placeholder="搜索匹配值，如 claude.ai / 10.0.0.0 / CN" />
             <select class="form-control filter-select" id="ruleFilterType">
@@ -1729,11 +1779,39 @@ function renderOverview(s) {
 }
 
 
+// ---- Traffic mode switcher ----
+const MODE_HINTS = {
+  rule: '命中规则 → 按规则处理；未命中 → 按「默认路由」处理。规则表中靠上的优先。',
+  global: '所有流量都会走出口节点池（按负载策略挑选）。下方规则暂时不生效。',
+  direct: '所有流量都直连，不走任何出口。下方规则暂时不生效；等同于临时关闭代理。',
+};
+
+function renderTrafficMode() {
+  if (!cfg) return;
+  const mode = cfg.traffic_mode || 'rule';
+  document.querySelectorAll('.mode-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  const hint = document.getElementById('modeHint');
+  if (hint) hint.textContent = MODE_HINTS[mode] || MODE_HINTS.rule;
+  const rulesCard = document.getElementById('rulesCard');
+  if (rulesCard) rulesCard.classList.toggle('dimmed', mode !== 'rule');
+}
+
+document.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (!cfg) return;
+    cfg.traffic_mode = btn.dataset.mode;
+    renderTrafficMode();
+  });
+});
+
 // ---- Config ----
 function renderConfig() {
   if (!cfg) return;
   document.getElementById('cfgStrategy').value = cfg.balance_strategy || 'round-robin';
   document.getElementById('cfgDefaultRoute').value = cfg.default_route?.action || 'direct';
+  renderTrafficMode();
 
   const ups = cfg.upstreams || [];
   const upBody = document.getElementById('upstreamBody');
