@@ -220,6 +220,34 @@ function parseConnectRequest(buf) {
   return { host: m[1], port: Number(m[2]) };
 }
 
+/**
+ * 解析 HTTP forward 代理请求的第一行：
+ *   METHOD http://host[:port][/path] HTTP/x.y
+ * 返回 { host, port, firstLineEndIdx, rewrittenFirstLine } 或 null。
+ * rewrittenFirstLine 去掉 absolute-URI 前缀，改写为 origin-form（服务端要的）。
+ */
+function parseHttpForwardRequest(buf) {
+  const str = buf.toString('latin1', 0, Math.min(buf.length, 8192));
+  const lineEnd = str.indexOf('\r\n');
+  if (lineEnd === -1) return null;
+  const firstLine = str.slice(0, lineEnd);
+  // METHOD http://host[:port][/path...] HTTP/x.y   (method 不能是 CONNECT)
+  const m = firstLine.match(/^(?!CONNECT\b)(\S+)\s+(https?):\/\/([^/:\s]+)(?::(\d+))?(\/[^\s]*)?\s+(HTTP\/[\d.]+)$/i);
+  if (!m) return null;
+  const method = m[1];
+  const scheme = m[2].toLowerCase();
+  const host = m[3];
+  const port = m[4] ? Number(m[4]) : (scheme === 'https' ? 443 : 80);
+  const path = m[5] || '/';
+  const version = m[6];
+  return {
+    host,
+    port,
+    firstLineEndIdx: lineEnd, // 不含 \r\n
+    rewrittenFirstLine: `${method} ${path} ${version}`,
+  };
+}
+
 class ChainProxy {
   constructor(viaUrl, upstreamUrl) {
     this.viaUrl = viaUrl;
@@ -243,24 +271,51 @@ class ChainProxy {
   _handle(client) {
     client.on('error', () => {});
     client.once('data', async (data) => {
-      const target = parseConnectRequest(data);
-      if (!target) {
-        client.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+      // 1) HTTPS CONNECT 隧道
+      const connectTarget = parseConnectRequest(data);
+      if (connectTarget) {
+        try {
+          const socket = await createChainSocket(
+            this.viaUrl, this.upstreamUrl,
+            connectTarget.host, connectTarget.port,
+          );
+          client.write('HTTP/1.1 200 Connection established\r\n\r\n');
+          socket.on('error', () => client.destroy());
+          client.on('error', () => socket.destroy());
+          socket.pipe(client);
+          client.pipe(socket);
+        } catch {
+          client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        }
         return;
       }
-      try {
-        const socket = await createChainSocket(
-          this.viaUrl, this.upstreamUrl,
-          target.host, target.port,
-        );
-        client.write('HTTP/1.1 200 Connection established\r\n\r\n');
-        socket.on('error', () => client.destroy());
-        client.on('error', () => socket.destroy());
-        socket.pipe(client);
-        client.pipe(socket);
-      } catch {
-        client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+
+      // 2) HTTP forward 代理（GET http://host/path HTTP/1.1）
+      const forward = parseHttpForwardRequest(data);
+      if (forward) {
+        try {
+          const socket = await createChainSocket(
+            this.viaUrl, this.upstreamUrl,
+            forward.host, forward.port,
+          );
+          // 把 absolute-URI 第一行改写成 origin-form，后面 headers/body 原样送出
+          const rest = data.slice(forward.firstLineEndIdx); // 以 \r\n 开头
+          const rewritten = Buffer.concat([
+            Buffer.from(forward.rewrittenFirstLine, 'latin1'),
+            rest,
+          ]);
+          socket.write(rewritten);
+          socket.on('error', () => client.destroy());
+          client.on('error', () => socket.destroy());
+          socket.pipe(client);
+          client.pipe(socket);
+        } catch {
+          client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        }
+        return;
       }
+
+      client.end('HTTP/1.1 400 Bad Request\r\n\r\n');
     });
   }
 
