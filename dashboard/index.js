@@ -1413,6 +1413,18 @@ PROCESS-NAME,Claude,🛬 AI落地节点'></textarea>
     </div>
   </div>
 
+  <!-- Cyber Confirm Modal (替代原生 confirm) -->
+  <div class="modal-overlay" id="cyberConfirmModal">
+    <div class="modal" style="width:460px">
+      <div class="modal-title" id="cyberConfirmTitle">确认操作</div>
+      <div id="cyberConfirmBody" style="font-size:12.5px;color:var(--text);line-height:1.75;font-family:var(--mono)"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="cyberConfirmCancel">取消</button>
+        <button type="button" class="btn btn-primary" id="cyberConfirmOk">确认</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 let cfg = null, originalCfg = null, lastStatus = null, envSettings = null, systemProxyStatus = null;
 let editUpIdx = -1;
@@ -1445,18 +1457,61 @@ function updateProxyToggleUI(paused) {
     : '代理运行中 · 点击暂停代理功能（不会停止程序）\\n要彻底关闭 Roo 进程请执行：roo down';
 }
 
+function cyberConfirm({ title = '确认操作', bodyHtml = '', confirmText = '确认', confirmClass = 'btn-primary' } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('cyberConfirmModal');
+    const titleEl = document.getElementById('cyberConfirmTitle');
+    const bodyEl = document.getElementById('cyberConfirmBody');
+    const okBtn = document.getElementById('cyberConfirmOk');
+    const cancelBtn = document.getElementById('cyberConfirmCancel');
+    titleEl.textContent = title;
+    bodyEl.innerHTML = bodyHtml;
+    okBtn.textContent = confirmText;
+    okBtn.className = 'btn ' + confirmClass;
+    overlay.classList.add('open');
+    const cleanup = (result) => {
+      overlay.classList.remove('open');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => { if (e.target === overlay) cleanup(false); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); cleanup(true); }
+    };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+    setTimeout(() => okBtn.focus(), 50);
+  });
+}
+
 document.getElementById('proxyToggleBtn').addEventListener('click', async () => {
   const btn = document.getElementById('proxyToggleBtn');
   const currentPaused = btn.classList.contains('paused');
   const willPause = !currentPaused;
   if (willPause) {
-    const ok = confirm(
-      '确认关闭代理功能？\\n\\n' +
-      '• 9999 端口不再接受新连接（HTTP 回 503，SOCKS5 直接断开）\\n' +
-      '• Dashboard / 配置 / 日志 仍正常可用\\n' +
-      '• 稍后可在这里重新点击以恢复\\n\\n' +
-      '提示：要彻底关闭 Roo 进程请执行命令：roo down'
-    );
+    const ok = await cyberConfirm({
+      title: '确认关闭代理功能',
+      bodyHtml:
+        '<div style="margin-bottom:10px;color:var(--text-2);font-size:11.5px;letter-spacing:.05em">// 以下行为将立即生效</div>' +
+        '<ul style="list-style:none;padding:0;margin:0 0 14px 0;display:flex;flex-direction:column;gap:8px">' +
+          '<li style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--red);flex-shrink:0">▶</span><span>9999 端口不再接受新连接（HTTP 回 <code>503</code>，SOCKS5 直接断开）</span></li>' +
+          '<li style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--cyan);flex-shrink:0">▶</span><span>Dashboard / 配置 / 日志 仍正常可用</span></li>' +
+          '<li style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--cyan);flex-shrink:0">▶</span><span>稍后可在此处重新点击以恢复</span></li>' +
+        '</ul>' +
+        '<div style="padding:10px 12px;border:1px solid var(--border);background:var(--panel-2);border-radius:var(--radius-lg);font-size:11.5px;color:var(--text-3)">' +
+          '// 要彻底关闭 Roo 进程，请在终端执行 <code>roo down</code>' +
+        '</div>',
+      confirmText: '关闭代理',
+      confirmClass: 'btn-danger',
+    });
     if (!ok) return;
   }
   btn.disabled = true;

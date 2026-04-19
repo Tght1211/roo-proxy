@@ -112,6 +112,40 @@ write_local_config() {
 EOF
 }
 
+cleanup_stale_roo_processes() {
+  # 场景：上一次通过 LaunchAgent 启动的 Roo 已脱离 pm2，pm2 delete 清不到；
+  # 且 LaunchAgent 的 KeepAlive=true 会在 5 秒内自动拉起，必须先 bootout 再 kill。
+  local label="com.rooproxy.agent"
+  local plist="$HOME/Library/LaunchAgents/${label}.plist"
+  if [ -f "$plist" ] && launchctl list "$label" >/dev/null 2>&1; then
+    print_line "检测到旧的 LaunchAgent 在运行，先临时卸载以释放端口..."
+    launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 \
+      || launchctl unload "$plist" >/dev/null 2>&1 \
+      || true
+  fi
+
+  local pids
+  pids="$(pgrep -f "${ROOT_DIR}/server/index\.js" 2>/dev/null || true)"
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+  print_line "发现脱管的旧 Roo 进程 (PID: $(echo $pids))，正在清理..."
+  kill $pids 2>/dev/null || true
+  local waited=0
+  while [ "$waited" -lt 6 ]; do
+    pids="$(pgrep -f "${ROOT_DIR}/server/index\.js" 2>/dev/null || true)"
+    [ -z "$pids" ] && return 0
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  pids="$(pgrep -f "${ROOT_DIR}/server/index\.js" 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    print_line "[清理] SIGTERM 超时，发送 SIGKILL..."
+    kill -9 $pids 2>/dev/null || true
+    sleep 0.5
+  fi
+}
+
 ensure_port_free() {
   local port="$1"
   local label="$2"
@@ -262,6 +296,8 @@ fi
 print_line ""
 print_line "正在清理旧的 pm2 Roo 进程..."
 pm2 delete roo >/dev/null 2>&1 || true
+
+cleanup_stale_roo_processes
 
 ensure_port_free "$LOCAL_PORT" "本地代理端口"
 ensure_port_free "$DASHBOARD_PORT" "Dashboard 端口"
