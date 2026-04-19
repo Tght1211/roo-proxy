@@ -15,8 +15,13 @@ function getSnapshotPath(settings) {
   return path.join(settings.dataDir, 'system-proxy-state.json');
 }
 
+// 用绝对路径：pm2/launchd 继承的 PATH 可能被剥光，不含 /usr/sbin
+// 系统级命令在 macOS 上位置固定，绝对路径比依赖 PATH 更稳
+const NETWORKSETUP_BIN = '/usr/sbin/networksetup';
+const ROUTE_BIN = '/sbin/route';
+
 async function runNetworksetup(args) {
-  return execFileAsync('networksetup', args, { timeout: 10_000, maxBuffer: 1024 * 256 });
+  return execFileAsync(NETWORKSETUP_BIN, args, { timeout: 10_000, maxBuffer: 1024 * 256 });
 }
 
 async function listNetworkServices() {
@@ -69,7 +74,7 @@ async function listNetworkServiceOrder() {
 
 async function getDefaultRouteInterface() {
   try {
-    const { stdout } = await execFileAsync('route', ['-n', 'get', 'default'], { timeout: 10_000, maxBuffer: 1024 * 64 });
+    const { stdout } = await execFileAsync(ROUTE_BIN, ['-n', 'get', 'default'], { timeout: 10_000, maxBuffer: 1024 * 64 });
     const line = stdout
       .split('\n')
       .map((item) => item.trim())

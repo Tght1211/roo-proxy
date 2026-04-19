@@ -522,6 +522,24 @@ function renderHtml() {
       width:6px;height:6px;background:currentColor;
       box-shadow:0 0 6px currentColor;animation:pulse 1.6s infinite;
     }
+    /* ---- Proxy on/off toggle (topbar) ---- */
+    .proxy-toggle{
+      display:flex;align-items:center;gap:8px;padding:6px 14px;
+      font-family:var(--mono);font-size:11px;font-weight:700;
+      letter-spacing:.1em;text-transform:uppercase;cursor:pointer;
+      background:var(--green-soft);color:var(--green);
+      border:1px solid var(--green-dim);
+      clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%);
+      transition:filter .15s,background .2s,color .2s,border-color .2s;
+    }
+    .proxy-toggle:hover{filter:brightness(1.2)}
+    .proxy-toggle:disabled{cursor:wait;opacity:.6}
+    .proxy-toggle.paused{background:var(--red-soft);color:var(--red);border-color:var(--red-dim)}
+    .proxy-toggle.paused .proxy-dot{animation:none;opacity:.85}
+    .proxy-dot{
+      width:6px;height:6px;background:currentColor;
+      box-shadow:0 0 8px currentColor;animation:pulse 1.6s infinite;
+    }
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
     /* ---- Main ---- */
@@ -964,6 +982,10 @@ function renderHtml() {
     </div>
     <div class="topbar-right">
       <span class="topbar-status" id="sidebarStatus"><span class="pulse"></span>ONLINE</span>
+      <button type="button" class="proxy-toggle" id="proxyToggleBtn" title="点击开启/关闭代理功能（不会停止程序）。要彻底关闭 Roo 进程请在终端执行：roo down">
+        <span class="proxy-dot"></span>
+        <span id="proxyToggleLabel">PROXY ON</span>
+      </button>
       <button class="btn btn-ghost btn-sm" id="reloadRulesBtn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         SYNC
@@ -1411,6 +1433,47 @@ function updateTopbarStatus(running) {
     el.innerHTML = '<span class="pulse"></span>ONLINE';
   }
 }
+
+function updateProxyToggleUI(paused) {
+  const btn = document.getElementById('proxyToggleBtn');
+  const label = document.getElementById('proxyToggleLabel');
+  if (!btn || !label) return;
+  btn.classList.toggle('paused', !!paused);
+  label.textContent = paused ? 'PROXY OFF' : 'PROXY ON';
+  btn.title = paused
+    ? '代理已关闭 · 9999 端口不再接受新连接 · 点击重新开启\\n要彻底关闭 Roo 进程请执行：roo down'
+    : '代理运行中 · 点击暂停代理功能（不会停止程序）\\n要彻底关闭 Roo 进程请执行：roo down';
+}
+
+document.getElementById('proxyToggleBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('proxyToggleBtn');
+  const currentPaused = btn.classList.contains('paused');
+  const willPause = !currentPaused;
+  if (willPause) {
+    const ok = confirm(
+      '确认关闭代理功能？\\n\\n' +
+      '• 9999 端口不再接受新连接（HTTP 回 503，SOCKS5 直接断开）\\n' +
+      '• Dashboard / 配置 / 日志 仍正常可用\\n' +
+      '• 稍后可在这里重新点击以恢复\\n\\n' +
+      '提示：要彻底关闭 Roo 进程请执行命令：roo down'
+    );
+    if (!ok) return;
+  }
+  btn.disabled = true;
+  try {
+    const res = await api('/proxy-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused: willPause }),
+    });
+    updateProxyToggleUI(res.paused);
+    toast(res.paused ? '代理已暂停' : '代理已恢复');
+  } catch (e) {
+    toast('切换失败：' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ---- Top nav tabs ----
 document.querySelectorAll('.nav-tab').forEach((tab) => {
@@ -2035,6 +2098,7 @@ async function loadOverview() {
     lastStatus = status;
     renderOverview(status);
     updateTopbarStatus(status.running !== false);
+    updateProxyToggleUI(status.proxyPaused === true);
 
     refreshNetworkDiagnostics(token);
   } catch (e) {
@@ -3065,6 +3129,7 @@ function createDashboard(options = {}) {
   const logger = options.logger;
   const logsDir = options.logsDir;
   const getStatus = options.getStatus;
+  const proxyState = options.proxyState || { paused: false };
 
   app.use(express.json());
 
@@ -3201,6 +3266,24 @@ function createDashboard(options = {}) {
     } catch (error) {
       await logger.error('Dashboard 保存配置失败', { error: error.message });
       res.status(400).json({ ok: false, message: error.message });
+    }
+  });
+
+  app.get('/proxy-state', (req, res) => {
+    res.json({ paused: !!proxyState.paused });
+  });
+
+  app.post('/proxy-state', async (req, res) => {
+    try {
+      const nextPaused = !!(req.body && req.body.paused);
+      const prev = !!proxyState.paused;
+      proxyState.paused = nextPaused;
+      if (prev !== nextPaused) {
+        await logger.info(`代理功能已${nextPaused ? '暂停' : '恢复'}（Dashboard 切换）`).catch(() => {});
+      }
+      res.json({ paused: proxyState.paused });
+    } catch (error) {
+      res.status(400).json({ message: error.message || '切换代理状态失败' });
     }
   });
 

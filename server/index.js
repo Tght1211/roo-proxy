@@ -94,6 +94,12 @@ async function detectRunningRoo(settings) {
   return null;
 }
 
+// proxyState.paused === true 时，LOCAL_PORT 上的新连接会被立即拒绝
+// (HTTP 客户端收到 503 明文提示；SOCKS5 / 未知字节客户端直接断开)。
+// 这样可以"暂停代理功能"但保留 Dashboard / 日志 / 配置 API 全部可用。
+// 主程序退出请用 `roo down` —— 本开关不负责 process 生命周期。
+const proxyState = { paused: false };
+
 async function bootstrap() {
   loadEnv();
   const settings = getSettings();
@@ -183,7 +189,9 @@ async function bootstrap() {
         configRefreshIntervalMinutes: settings.configRefreshIntervalMinutes,
         remoteConfigEnabled: isRemoteConfigEnabled(settings),
       },
+      proxyPaused: proxyState.paused,
     }),
+    proxyState,
   });
 
   await proxyServer.listen();
@@ -197,6 +205,23 @@ async function bootstrap() {
     muxSockets.add(socket);
     socket.once('close', () => muxSockets.delete(socket));
     socket.once('data', (firstChunk) => {
+      // 代理被暂停：SOCKS5 直接断开（SOCKS5 没有人类可读 body），HTTP 回 503
+      if (proxyState.paused) {
+        if (firstChunk[0] === 0x05) {
+          socket.destroy();
+        } else {
+          const body = 'Roo proxy is paused. Re-enable from dashboard, or run `roo down` to stop the program.';
+          try {
+            socket.end(
+              'HTTP/1.1 503 Service Unavailable\r\n' +
+              'Content-Type: text/plain; charset=utf-8\r\n' +
+              'Content-Length: ' + Buffer.byteLength(body) + '\r\n' +
+              'Connection: close\r\n\r\n' + body
+            );
+          } catch (e) { socket.destroy(); }
+        }
+        return;
+      }
       if (firstChunk[0] === 0x05) {
         socket.pause();
         socket.unshift(firstChunk);
